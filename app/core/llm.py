@@ -14,7 +14,7 @@ import hashlib
 import json
 import logging
 from functools import lru_cache
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 import httpx
 import numpy as np
@@ -181,14 +181,3 @@ def parse_json(text: str) -> Any:
             except json.JSONDecodeError:
                 pass
     return None
-
-
-async def stream_text(prompt: str, system: str = "", model: str | None = None) -> Iterable[str]:
-    llm = get_chat_model(model=model)
-    msgs = []
-    if system:
-        msgs.append(("system", with_no_think(system)))
-    msgs.append(("human", prompt))
-    async for chunk in llm.astream(msgs):
-        if isinstance(chunk.content, str) and chunk.content:
-            yield chunk.content

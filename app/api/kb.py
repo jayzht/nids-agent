@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -60,7 +61,7 @@ async def create_kb(req: KBCreateRequest):
             )
             state.status = "done"
             state.stats = index.stats()
-            state.finished_at = asyncio.get_event_loop().time()
+            state.finished_at = time.time()
         except Exception as exc:  # noqa: BLE001
             logger.exception("ingest failed")
             state.status = "error"
