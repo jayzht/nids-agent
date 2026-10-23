@@ -1,0 +1,14 @@
+[project]
+name = "devrag"
+version = "1.0.0"
+description = "DevRAG：基于 LangGraph + FastAPI + 混合检索的文档智能问答 Agent"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

@@ -1,0 +1,303 @@
+# DevRAG · 文档智能问答 Agent
+
+> 一个**完整可跑**的 RAG 项目：拿开源框架的官方文档做知识库，用 LangGraph 搭 Agent 工作流，FastAPI 提供 SSE 流式接口，本地 Ollama 推理，**零 API 费用**。
+
+```bash
+git clone 本项目 && pip install -r requirements.txt
+ollama pull qwen3:8b && ollama pull bge-m3
+python scripts/fetch_corpus.py && python scripts/build_index.py
+uvicorn app.main:app --port 8000     # http://127.0.0.1:8000
+```
+
+---
+
+## 一、先解决「做什么方向」和「没有文档」
+
+你提的两个问题，这个项目是这么解的：
+
+**文档从哪来？** GitHub 上的开源项目文档本身就是最好的语料：纯 Markdown、带标题层级、带代码块、可复现、免授权。
+`scripts/fetch_corpus.py` 用 sparse clone 只拉文档目录，40 秒就能拿到 300+ 篇文档。
+
+**做什么方向？** 下面 5 个方向都「文档现成」，按落地难度排序：
+
+| 方向 | 语料来源（都能直接 clone） | 难度 | 适合谁 |
+|---|---|---|---|
+| **① 技术文档助手（本项目）** | `tiangolo/fastapi` → `docs/en/docs`；`langchain-ai/docs` → `src/oss`；`pydantic/pydantic` → `docs` | ★★☆ | 想同时展示 RAG + Agent + 后端工程 |
+| ② 法律法规问答 | 国家法律法规数据库（`flk.npc.gov.cn`）抓条文，转 Markdown | ★★★ | 想强调「领域知识 + 引用溯源」 |
+| ③ 论文阅读助手 | arXiv API 按主题批量下 PDF，`pypdf` 解析 | ★★★☆ | 想练 PDF 版面解析 + 长文档切分 |
+| ④ 上市公司年报分析 | 巨潮资讯网 PDF 年报 | ★★★★ | 想练表格/图表抽取、财报问答 |
+| ⑤ 个人知识库 | 自己的笔记 / Obsidian 导出 | ★☆ | 想快速出 Demo |
+
+我选 ① 的原因很实在：**面试官问的技术点，正好就是知识库里的内容**。你可以用它答「LangGraph 的检查点怎么工作」，
+也可以翻出源码说「我就是这么实现的」—— 讲业务和讲技术是同一条线，不容易被问穿。
+后面的 `data/raw/<kb>/` 目录支持任意 Markdown，随时可以再塞一个领域知识库进去。
+
+---
+
+## 二、它到底做了什么
+
+一次提问的完整链路（不是「向量库 + 拼 prompt」那种玩具版）：
+
+```
+用户问题（中文）
+  │
+  ├─ router      判断意图：闲聊直接答 / 提问走检索；多库时由 LLM 选库
+  ├─ rewrite     改写成 3 条检索式（中文 → 英文关键词，保留 API 名）
+  ├─ retrieve    bge-m3 稠密召回 + BM25 稀疏召回，归一化加权融合
+  ├─ grade       LLM 逐条打 0/1/2 分，只留 ≥1 的片段；全废则改写重试（最多 2 轮）
+  ├─ generate    带 [1][2] 编号的引用式生成，SSE 逐字吐给前端
+  ├─ verify      正则校验引用编号是否合法；没有有效引用 → 强制重生成一次
+  └─ finalize    输出答案 + 可点开的来源卡片
+```
+
+另有一条 ReAct 模式（`mode=react`）：模型自己决定调 `list_knowledge_bases / search_knowledge_base / read_document`，
+多次换关键词搜索再作答 —— 用来对比「固定编排 vs 自主 Agent」的取舍。
+
+### 实测数字
+
+| 指标 | 值 | 说明 |
+|---|---|---|
+| 知识库规模 | 316 篇文档 / 7,616 个片段 | FastAPI 154 + LangGraph/LangChain 121 + Pydantic 41 |
+| 索引构建 | 约 53 秒（CPU，8 核并行向量化） | bge-m3，1024 维 |
+| 检索质量 | **recall@6 0.893 / MRR 0.757 / nDCG@6 0.791** | 28 题自建 golden set，`make eval` 可复现 |
+| 单次问答 | 25~40 秒（CPU 跑 qwen3:8b） | 4 次 LLM 调用；有 GPU 会快一个数量级 |
+| 成本 | 0 元 | 全部本地 Ollama |
+
+> 数字不好看没关系，**能解释为什么**才是重点。比如 recall@6 只有 0.89，我会说：
+> 3 道题失败在「LangChain 与 LangGraph 文档内容重叠」，属于语料本身的歧义，不是检索器的问题。
+
+---
+
+## 三、快速开始
+
+### 0. 环境要求
+
+- Python 3.10+
+- [Ollama](https://ollama.com/)（本地推理，CPU 也能跑）
+- 可选：Docker（想用 Qdrant 作为向量库时）
+
+```bash
+# 模型（约 10GB，只需一次）
+ollama pull qwen3:8b        # 生成 + 改写 + 打分
+ollama pull bge-m3          # 多语言向量，中文问英文文档必须用它，别用 nomic
+```
+
+### 1. 安装依赖
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env          # 默认就连本地 Ollama，不用改
+```
+
+### 2. 拉语料 + 建索引
+
+```bash
+python scripts/fetch_corpus.py
+# GitHub 直连不通时：
+# python scripts/fetch_corpus.py --proxy http://127.0.0.1:7890
+
+python scripts/build_index.py          # 约 1 分钟
+```
+
+产物在 `data/index/<kb>/`：`meta.json` / `chunks.jsonl` / `vectors.npy` / `ids.json`。
+`chunks.jsonl` 是纯文本，可以直接 `grep`、可以人工 review —— 调分块的时候非常有用。
+
+### 3. 启动
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+# 打开 http://127.0.0.1:8000
+```
+
+或者 `make run` / `make test` / `make eval` / `make sweep`。
+
+### 4. 换后端（可选）
+
+任何 OpenAI 兼容服务都能接，改 `.env` 即可：
+
+```bash
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_API_KEY=sk-xxx
+LLM_MODEL=deepseek-chat
+LLM_FAST_MODEL=deepseek-chat      # 路由/打分用小模型，省钱
+EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
+EMBEDDING_MODEL=BAAI/bge-m3
+```
+
+想用 Qdrant：`docker compose up -d qdrant` + `VECTOR_BACKEND=qdrant`。
+
+---
+
+## 四、代码结构
+
+```
+app/
+├── main.py              FastAPI 入口：路由、CORS、启动预热
+├── settings.py          pydantic-settings，全部配置走环境变量
+├── deps.py              单例依赖注入
+├── kb.py                知识库生命周期：构建 / 缓存 / 删除 / 后台任务进度
+├── api/
+│   ├── chat.py          POST /api/chat（SSE）、/api/feedback、/api/chunks
+│   ├── kb.py            POST /api/kbs、/reindex、/status、DELETE
+│   └── evals.py         POST /api/eval/run
+├── core/
+│   ├── llm.py           ChatOpenAI 工厂 + 自写批量 embedding 客户端（重试/缓存/归一化）
+│   └── text.py          中英混排分词、token 估算、去重指纹
+├── ingest/
+│   ├── loader.py        Markdown/MDX 清洗（frontmatter / JSX / style / 锚点 / 噪音文档）
+│   ├── chunker.py       ★ 结构化分块：标题面包屑 + 代码块原子化 + 装箱重叠
+│   └── types.py         Document / Chunk
+├── retrieval/
+│   ├── bm25.py          手写 BM25（倒排表，只算含查询词的文档）
+│   ├── vectorstore.py   后端抽象：NumPy / Qdrant
+│   ├── index.py         ★ 混合检索 + 两种融合（RRF / 归一化）
+│   ├── rerank.py        规则重排 / LLM listwise 重排
+│   └── service.py       跨库检索与融合
+├── agent/
+│   ├── state.py         ★ TypedDict + reducer 的状态设计
+│   ├── graph.py         ★ Corrective RAG 图：条件边 + 纠错循环 + 引用校验
+│   ├── tools.py         三个粒度不同的检索工具
+│   ├── react.py         ReAct Agent（自主工具调用）
+│   └── prompts.py       全部提示词集中管理
+├── eval/
+│   ├── dataset.jsonl    ★ 28 题 golden set（含期望文档与关键词）
+│   ├── metrics.py       recall / MRR / nDCG / 关键词覆盖 / 引用准确率
+│   └── runner.py        检索评测 + 端到端评测（LLM 裁判）
+└── web/index.html       零构建前端：SSE 渲染、执行轨迹、来源抽屉
+```
+
+★ 标记的是「面试最容易被问到、也最能体现思考」的四个文件。
+
+---
+
+## 五、几个关键设计（为什么不是玩具版）
+
+### 1. 分块：按 Markdown 结构切，不是按 512 字符切
+
+固定滑窗会把「标题 + 正文 + 代码」切散。这里的做法：
+
+- 先用 Markdown 标题切段，保留层级路径（`Query Parameters > Required query parameters`）；
+- 代码块是**原子**，绝不跨块切断；超大代码块必须切时，**每片都补上围栏**；
+- 段内按空行切块 + 贪心装箱 + 尾部重叠，控制 token 预算；
+- 跨文档用内容指纹去重（多语言版本 / 复制粘贴的章节）。
+
+过程中踩到一个真实问题：**文档的 H1 如果等于产品名（如 `index.md` 的 H1 就是 `FastAPI`），
+每个 chunk 都带这个前缀，整篇文档会在向量空间里变成「万能命中」的 hub**，
+把真正相关的页面挤出 top-k。解决办法是 `short_heading()`：丢掉与文档标题相同的一级标题，只保留最近两层。
+这个坑和修法都写在 `app/ingest/chunker.py` 的注释里，面试可以直接讲。
+
+### 2. 检索：混合 + 可切换融合，并且**用数据选**
+
+```python
+# RRF：只看排名，尺度无关，工业界默认
+score = w_dense/(k+rank_dense) + w_bm25/(k+rank_bm25)
+
+# normalized：各自 min-max 后再加权，保留分数置信度
+score = w_dense*norm(dense) + w_bm25*norm(bm25)
+```
+
+`scripts/sweep.py` 在 golden set 上扫了权重 × 融合方式 × 候选池，结果是：
+**同一个权重下 normalized 明显优于 RRF**（recall@6 0.893 vs 0.875，MRR 0.757 vs 0.681），
+所以默认用 normalized、`bm25_weight=0.2`。这不是拍脑袋，是你跑一遍就能复现的结论。
+
+另外，`bm25_weight` 再调大反而掉点 —— 因为我们的查询已经被改写成英文关键词，稠密检索本身就很强；
+BM25 的价值在于「类名 / 错误码 / 版本号」这类精确词，属于召回兜底，不是主力。
+
+### 3. 幻觉治理：三道闸
+
+| 闸门 | 做法 | 效果 |
+|---|---|---|
+| 生成前 | 检索结果 LLM 逐条打 0/1/2，只留 ≥1 | 垃圾片段不进上下文 |
+| 生成时 | 强制标注 `[n]`，编号由系统注入 | 可溯源 |
+| 生成后 | 正则校验引用编号合法性，无有效引用则重生成一次 | 拦住「不引用就瞎答」 |
+
+再叠加「检索全空 → 明确拒答」，基本消灭了「一本正经胡说」。这部分逻辑集中在 `agent/graph.py` 的
+`node_grade / node_verify / route_after_verify`。
+
+### 4. Agent：两种形态，讲得清取舍
+
+| | 固定编排（CRAG 图） | 自主 ReAct |
+|---|---|---|
+| 成本 | 3~5 次 LLM，可预测 | 不确定，可能 10+ 次 |
+| 可控性 | 每步可测、可回放 | 只能端到端测 |
+| 适合 | 线上问答、SLA 敏感 | 探索型、工具多 |
+
+两条链路共用同一套检索与工具，切换只改一个 `mode` 参数。
+
+### 5. 后端：流式 + 可观测
+
+- SSE 三种事件：`step`（节点进展）/ `token`（逐字）/ `final`（答案 + 引用 + 耗时），前端直接渲染执行轨迹；
+- 建库是耗时任务，走 `202 + 轮询进度`，不阻塞 HTTP；
+- `X-Accel-Buffering: no` 防止 Nginx 缓冲导致「假流式」—— 这个坑线上必踩。
+
+---
+
+## 六、API
+
+```bash
+# 流式问答（SSE）
+curl -N -X POST localhost:8000/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"pydantic 怎么禁止多余字段？","kbs":["pydantic"]}'
+
+# 自主 Agent
+curl -N -X POST localhost:8000/api/chat -H 'Content-Type: application/json' \
+  -d '{"question":"checkpointer 和 store 的区别","kbs":["langgraph"],"mode":"react"}'
+
+# 建库（后台任务）+ 轮询
+curl -X POST localhost:8000/api/kbs -H 'Content-Type: application/json' \
+  -d '{"name":"mydocs","title":"我的知识库"}'
+curl localhost:8000/api/kbs/mydocs/status
+
+# 检索评测
+curl -X POST localhost:8000/api/eval/run -H 'Content-Type: application/json' \
+  -d '{"mode":"retrieval","top_k":6}'
+```
+
+完整交互文档：`http://127.0.0.1:8000/docs`。
+
+---
+
+## 七、评测
+
+```bash
+make eval                                  # 检索评测（秒级，不调 LLM）
+python scripts/run_eval.py --mode end2end  # 端到端（每题跑一遍 Agent + LLM 裁判，1~2 分钟）
+make sweep                                 # 扫超参，选最优融合方式与权重
+```
+
+`app/eval/dataset.jsonl` 每题包含：问题、改写后查询、期望命中的文档、答案必含关键词。
+指标口径都在 `metrics.py` 里写着，被追问「faithfulness 怎么算的」不会卡壳。
+
+---
+
+## 八、这个项目覆盖的岗位知识点
+
+`docs/INTERVIEW_MAP.md` 是一张完整对照表（知识点 → 代码位置 → 面试问法），覆盖：
+
+- **RAG**：解析、分块、去重、元数据、混合检索、融合、重排、多查询改写、引用与幻觉治理
+- **Agent**：LangGraph 状态设计 / 条件边 / 循环上限 / 检查点 / 流式 / 工具调用 / ReAct 与编排的取舍
+- **工程**：FastAPI 异步与依赖注入、SSE、后台任务、配置管理、持久化、Docker
+- **评估**：recall/MRR/nDCG、关键词覆盖、LLM 裁判、扫参选型、失败归因
+
+`docs/ARCHITECTURE.md` 讲架构与取舍，`docs/ROADMAP.md` 讲怎么把它变成「你自己的项目」（含简历写法）。
+
+---
+
+## 九、已知问题
+
+| 问题 | 现状 | 怎么改 |
+|---|---|---|
+| 检查点在内存 | 重启后多轮记忆丢失 | 换 `SqliteSaver` / `PostgresSaver` |
+| 没有增量索引 | 改一篇文章要全量重建 | 用 chunk 指纹做 diff |
+| 重排默认关闭 | 规则重排在本数据集上略掉点（−0.03 nDCG） | `RERANK_MODE=lexical/llm` 可开；或接 cross-encoder |
+| 无鉴权/多租户 | 单机 Demo | API Key + KB 级 ACL |
+| CPU 推理慢 | 25~40 秒/问 | 上 GPU、或 `LLM_FAST_MODEL` 用小模型做路由/打分 |
+| 评测集偏小 | 28 题，单题权重 3.6% | 扩到 100+ 并按问题类型分桶 |
+
+---
+
+## 十、License
+
+MIT。语料版权归各开源项目所有，仅供学习使用。
