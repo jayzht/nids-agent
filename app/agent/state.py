@@ -32,6 +32,7 @@ class RAGState(TypedDict, total=False):
 
     # ---- 路由 ----
     kbs: list[str]
+    sources: list[str]              # KB 内的来源子集（如 ids 下的 suricata / zeek / rfc / papers）
     need_retrieval: bool
     intent: str
 

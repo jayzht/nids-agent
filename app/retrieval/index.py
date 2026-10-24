@@ -138,7 +138,12 @@ class KBIndex:
         return {i: (v - lo) / span for i, v in scores}
 
     def hybrid_search(
-        self, query: str, qvec: np.ndarray, k: int, candidate_k: int
+        self,
+        query: str,
+        qvec: np.ndarray,
+        k: int,
+        candidate_k: int,
+        prefixes: list[str] | None = None,
     ) -> list[Hit]:
         """稠密 + 稀疏两路召回，再融合。
 
@@ -172,7 +177,12 @@ class KBIndex:
             for rank, (idx, _) in enumerate(sparse):
                 fused[idx] = fused.get(idx, 0.0) + w_bm25 / (s.rrf_k + rank + 1)
 
-        ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:k]
+        items = fused.items()
+        if prefixes:
+            # 混合语料（如 ids = suricata + zeek + rfc + 论文）按来源子集过滤
+            wanted = tuple(p.rstrip("/") + "/" for p in prefixes)
+            items = [(i, sc) for i, sc in items if self.chunks[i].path.startswith(wanted)]
+        ranked = sorted(items, key=lambda kv: kv[1], reverse=True)[:k]
         hits: list[Hit] = []
         for i, (idx, score) in enumerate(ranked):
             chunk = self.chunks[idx]

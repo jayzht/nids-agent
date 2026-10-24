@@ -23,6 +23,7 @@ class Retriever:
         k: int | None = None,
         candidate_k: int | None = None,
         rerank_mode: str | None = None,
+        prefixes: list[str] | None = None,
     ) -> list[Hit]:
         s = self.settings
         k = k or s.top_k
@@ -32,13 +33,18 @@ class Retriever:
             return []
 
         qvec = await get_embedder().embed_query(query)
-        merged = await self._search_many(query, qvec, targets, candidate_k)
+        merged = await self._search_many(query, qvec, targets, candidate_k, prefixes)
         if not merged:
             return []
         return await rerank(query, merged, k, mode=rerank_mode or s.rerank_mode)
 
     async def _search_many(
-        self, query: str, qvec, targets: list[str], candidate_k: int
+        self,
+        query: str,
+        qvec,
+        targets: list[str],
+        candidate_k: int,
+        prefixes: list[str] | None = None,
     ) -> list[Hit]:
         """多知识库：先各自召回，再用 RRF 做第二轮融合（跨库分数不可比）。"""
         s = self.settings
@@ -49,7 +55,7 @@ class Retriever:
             except Exception:  # noqa: BLE001
                 return []
             return await asyncio.to_thread(
-                index.hybrid_search, query, qvec, candidate_k, candidate_k
+                index.hybrid_search, query, qvec, candidate_k, candidate_k, prefixes
             )
 
         results = await asyncio.gather(*(one(n) for n in targets))

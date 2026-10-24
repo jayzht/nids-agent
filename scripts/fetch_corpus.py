@@ -21,13 +21,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import shutil
-import subprocess
 import sys
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _net import clone_sparse, log, proxy_candidates, run  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "data" / "raw"
@@ -83,81 +82,6 @@ EXCLUDE_PARTS = {
 }
 
 
-def log(msg: str) -> None:
-    print(msg, flush=True)
-
-
-def proxy_candidates(cli_proxy: str | None) -> list[str | None]:
-    """显式 --proxy 时它优先；否则直连优先，再逐个尝试环境里的代理。"""
-    cands: list[str | None] = [cli_proxy, None] if cli_proxy else [None]
-    for p in (
-        cli_proxy,
-        os.environ.get("GIT_PROXY"),
-        os.environ.get("HTTPS_PROXY"),
-        os.environ.get("https_proxy"),
-        os.environ.get("HTTP_PROXY"),
-        os.environ.get("http_proxy"),
-    ):
-        if p and p not in cands:
-            cands.append(p)
-    return cands
-
-
-def run(cmd: list[str], cwd: Path | None = None, proxy: str | None = None,
-        timeout: int = 120) -> str:
-    env = dict(os.environ)
-    for key in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy"):
-        env.pop(key, None)
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    if proxy:
-        env["http_proxy"] = env["https_proxy"] = proxy
-    proc = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
-    if proc.returncode != 0:
-        raise RuntimeError(f"命令失败: {' '.join(cmd)}\n{(proc.stderr or '')[-800:]}")
-    return proc.stdout.strip()
-
-
-def clone_sparse(corpus: Corpus, proxies: list[str | None], attempts: int = 2) -> Path:
-    dest = CACHE / corpus.name
-    if (dest / ".git").exists():
-        # 缓存可能是「只建了 .git、还没 checkout 文件」的半成品，补一次 checkout
-        try:
-            run(["git", "sparse-checkout", "set", *corpus.subdirs.keys()], cwd=dest, timeout=300)
-            if all((dest / s).exists() for s in corpus.subdirs):
-                log(f"  [cache] 复用 {dest}")
-                return dest
-            log("  [cache] 内容不完整，重新克隆")
-        except Exception:  # noqa: BLE001
-            log("  [cache] checkout 失败，重新克隆")
-        shutil.rmtree(dest, ignore_errors=True)
-
-    last_err: Exception | None = None
-    for round_ in range(attempts):
-        for proxy in proxies:
-            if dest.exists():
-                shutil.rmtree(dest)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            label = proxy or "直连"
-            log(f"  clone 尝试[{round_ + 1}] {label}")
-            try:
-                run(
-                    ["git", "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=25",
-                     "clone", "--depth", "1", "--filter=blob:none", "--sparse",
-                     corpus.repo, str(dest)],
-                    proxy=proxy,
-                )
-                run(["git", "sparse-checkout", "set", *corpus.subdirs.keys()], cwd=dest,
-                    proxy=proxy)
-                log(f"  ✔ clone 成功（{label}）")
-                return dest
-            except Exception as exc:  # noqa: BLE001
-                last_err = exc
-                log(f"  ✘ 失败：{str(exc).splitlines()[0][:120]}")
-                shutil.rmtree(dest, ignore_errors=True)
-                time.sleep(1)
-    raise RuntimeError(f"无法克隆 {corpus.repo}（直连和代理都失败）：{last_err}")
-
-
 def copy_docs(corpus: Corpus, repo_dir: Path) -> int:
     out_root = RAW / corpus.name
     if out_root.exists():
@@ -206,7 +130,8 @@ def write_manifest(corpus: Corpus, repo_dir: Path, num_files: int) -> None:
 def fetch(name: str, proxies: list[str | None]) -> None:
     corpus = CORPORA[name]
     log(f"[{name}] {corpus.title}")
-    repo_dir = clone_sparse(corpus, proxies)
+    repo_dir = CACHE / corpus.name
+    clone_sparse(corpus.repo, repo_dir, list(corpus.subdirs), proxies)
     n = copy_docs(corpus, repo_dir)
     if n == 0:
         raise RuntimeError(f"{name}: 没有复制到任何文档，检查 subdirs 配置")

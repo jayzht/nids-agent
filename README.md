@@ -23,6 +23,7 @@ uvicorn app.main:app --port 8000     # http://127.0.0.1:8000
 | 方向 | 语料来源（都能直接 clone） | 难度 | 适合谁 |
 |---|---|---|---|
 | **① 技术文档助手（本项目）** | `tiangolo/fastapi` → `docs/en/docs`；`langchain-ai/docs` → `src/oss`；`pydantic/pydantic` → `docs` | ★★☆ | 想同时展示 RAG + Agent + 后端工程 |
+| **①' 领域知识库（本项目已内置）** | Suricata / Zeek / nDPI 文档 + IETF RFC + arXiv 论文 | ★★★ | 有自己的研究方向（如流量检测） |
 | ② 法律法规问答 | 国家法律法规数据库（`flk.npc.gov.cn`）抓条文，转 Markdown | ★★★ | 想强调「领域知识 + 引用溯源」 |
 | ③ 论文阅读助手 | arXiv API 按主题批量下 PDF，`pypdf` 解析 | ★★★☆ | 想练 PDF 版面解析 + 长文档切分 |
 | ④ 上市公司年报分析 | 巨潮资讯网 PDF 年报 | ★★★★ | 想练表格/图表抽取、财报问答 |
@@ -57,10 +58,11 @@ uvicorn app.main:app --port 8000     # http://127.0.0.1:8000
 
 | 指标 | 值 | 说明 |
 |---|---|---|
-| 知识库规模 | 316 篇文档 / 7,616 个片段 | FastAPI 154 + LangGraph/LangChain 121 + Pydantic 41 |
+| 知识库规模 | 854 篇文档 / 20,407 个片段 | 技术文档 3 库（316 篇）+ 领域库 `ids`（538 篇） |
 | 索引构建 | 约 53 秒（CPU，8 核并行向量化） | bge-m3，1024 维 |
-| 检索质量 | **recall@6 0.893 / MRR 0.757 / nDCG@6 0.791** | 28 题自建 golden set，`make eval` 可复现 |
-| 单次问答 | 25~40 秒（CPU 跑 qwen3:8b） | 4 次 LLM 调用；有 GPU 会快一个数量级 |
+| 检索质量（技术文档） | recall@6 **0.893** / MRR 0.757 / nDCG@6 0.791 | 28 题 golden set |
+| 检索质量（NIDS 领域） | recall@6 **1.00** / MRR 0.815 / nDCG@6 0.861 | 16 题 golden set |
+| 单次问答 | 16~40 秒（CPU 跑 qwen3:8b） | 4 次 LLM 调用；领域库 + `sources` 过滤更快 |
 | 成本 | 0 元 | 全部本地 Ollama |
 
 > 数字不好看没关系，**能解释为什么**才是重点。比如 recall@6 只有 0.89，我会说：
@@ -68,7 +70,56 @@ uvicorn app.main:app --port 8000     # http://127.0.0.1:8000
 
 ---
 
-## 三、快速开始
+## 三、领域知识库：网络流量检测（NIDS）
+
+技术文档库证明「会做 RAG」，领域库证明「能在自己的方向上做出东西」。所以项目内置了第二个知识库 `ids`。
+
+### 语料：三类源、三种格式
+
+| 来源 | 内容 | 格式 | 为什么需要 |
+|---|---|---|---|
+| **Suricata** `OISF/suricata` → `doc/userguide` | 规则关键字、`eve.json`、抓包性能 | reStructuredText | 规则怎么写、字段什么含义 |
+| **Zeek** `zeek/zeek-docs` | 日志字段、脚本语言、Notice / Intel / SumStats 框架 | reStructuredText | 事件从哪拿、策略怎么写 |
+| **nDPI** `ntop/nDPI` → `doc` | 流风险定义、协议识别 | RST | 加密流量的风险标签 |
+| **IETF RFC** 791/793/768/792/1035/8446/9110 | IP、TCP、UDP、ICMP、DNS、TLS、HTTP 规范 | 定宽纯文本 | 协议事实的权威来源 |
+| **arXiv** 16 篇最新论文 | 入侵检测、加密流量分类、无监督异常检测 | HTML（LaTeXML） | 方法论与数据集 |
+
+一句话：**NIDS 没有一份覆盖全部内容的文档**，知识散在「工具文档 / 协议规范 / 论文」三类源里，而且格式各不相同。
+这也是这个领域真正的工作量所在 —— 不是找不到数据，是数据不齐、格式不一。
+
+### 三种格式怎么统一
+
+`app/ingest/converters.py` 在接入层做格式归一化，输出统一 Markdown，下游分块/索引完全不用改：
+
+- **RST → MD**：标题下划线/上划线转 `#`、`.. code-block::` 转围栏、`.. note::` 转引用块、`.. toctree::`/图片/包含指令丢弃、`:ref:` 这类角色去掉；
+- **RFC → MD**：去分页符与页眉页脚，靠「下一行是空行且不含点线」识别章节标题 —— RFC 目录行长这样 `1.  INTRODUCTION ....... 1`，不加这条规则会把整份目录当标题；
+- **arXiv HTML → MD**：BeautifulSoup 取正文、MathML 的 `alttext` 保留公式、html2text 转换，公式和表格结构不丢。
+
+### 建库与效果
+
+```bash
+python scripts/fetch_domain_corpus.py --proxy http://127.0.0.1:7890
+python scripts/build_index.py --kb ids
+```
+
+产物：**538 篇文档 / 12,791 个片段**；16 题领域评测集成绩 **recall@6 1.00、MRR 0.81、nDCG@6 0.86**。
+
+### 跨来源噪声：`sources` 过滤
+
+混合语料有个副作用：问「Suricata 规则怎么写」，可能同时召回 nDPI 的风险定义和 RFC 原文。
+检索层因此支持按来源子集过滤：
+
+```bash
+curl -N -X POST localhost:8000/api/chat -H 'Content-Type: application/json' \
+  -d '{"question":"Suricata 怎么检测可疑 User-Agent","kbs":["ids"],"sources":["suricata"]}'
+```
+
+实测：过滤后单题耗时从 53s 降到 16s，引用从 3 条（含无关来源）变成 2 条纯 Suricata 文档。
+
+这也解释了「多知识库」和「单库多来源」的分工：分库更适合**主题差异大**（技术文档 vs 领域文档），
+`kbs` 多选即可跨库检索；单库多来源适合**同一主题的不同侧面**（工具/规范/论文），用 `sources` 收窄。
+
+## 四、快速开始
 
 ### 0. 环境要求
 
@@ -129,7 +180,7 @@ EMBEDDING_MODEL=BAAI/bge-m3
 
 ---
 
-## 四、代码结构
+## 五、代码结构
 
 ```
 app/
@@ -146,6 +197,7 @@ app/
 │   └── text.py          中英混排分词、token 估算、去重指纹
 ├── ingest/
 │   ├── loader.py        Markdown/MDX 清洗（frontmatter / JSX / style / 锚点 / 噪音文档）
+│   ├── converters.py    ★ 多格式接入：RST / RFC 纯文本 / HTML → Markdown
 │   ├── chunker.py       ★ 结构化分块：标题面包屑 + 代码块原子化 + 装箱重叠
 │   └── types.py         Document / Chunk
 ├── retrieval/
@@ -171,7 +223,7 @@ app/
 
 ---
 
-## 五、几个关键设计（为什么不是玩具版）
+## 六、几个关键设计（为什么不是玩具版）
 
 ### 1. 分块：按 Markdown 结构切，不是按 512 字符切
 
@@ -233,7 +285,7 @@ BM25 的价值在于「类名 / 错误码 / 版本号」这类精确词，属于
 
 ---
 
-## 六、API
+## 七、API
 
 ```bash
 # 流式问答（SSE）
@@ -244,6 +296,10 @@ curl -N -X POST localhost:8000/api/chat \
 # 自主 Agent
 curl -N -X POST localhost:8000/api/chat -H 'Content-Type: application/json' \
   -d '{"question":"checkpointer 和 store 的区别","kbs":["langgraph"],"mode":"react"}'
+
+# 领域知识库 + 按来源收窄（ids = suricata / zeek / ndpi / rfc / papers）
+curl -N -X POST localhost:8000/api/chat -H 'Content-Type: application/json' \
+  -d '{"question":"Zeek 的 Notice framework 怎么用","kbs":["ids"],"sources":["zeek"]}'
 
 # 建库（后台任务）+ 轮询
 curl -X POST localhost:8000/api/kbs -H 'Content-Type: application/json' \
@@ -259,7 +315,7 @@ curl -X POST localhost:8000/api/eval/run -H 'Content-Type: application/json' \
 
 ---
 
-## 七、评测
+## 八、评测
 
 ```bash
 make eval                                  # 检索评测（秒级，不调 LLM）
@@ -272,7 +328,7 @@ make sweep                                 # 扫超参，选最优融合方式�
 
 ---
 
-## 八、这个项目覆盖的岗位知识点
+## 九、这个项目覆盖的岗位知识点
 
 `docs/INTERVIEW_MAP.md` 是一张完整对照表（知识点 → 代码位置 → 面试问法），覆盖：
 
@@ -285,7 +341,7 @@ make sweep                                 # 扫超参，选最优融合方式�
 
 ---
 
-## 九、已知问题
+## 十、已知问题
 
 | 问题 | 现状 | 怎么改 |
 |---|---|---|
@@ -294,10 +350,12 @@ make sweep                                 # 扫超参，选最优融合方式�
 | 重排默认关闭 | 规则重排在本数据集上略掉点（−0.03 nDCG） | `RERANK_MODE=lexical/llm` 可开；或接 cross-encoder |
 | 无鉴权/多租户 | 单机 Demo | API Key + KB 级 ACL |
 | CPU 推理慢 | 25~40 秒/问 | 上 GPU、或 `LLM_FAST_MODEL` 用小模型做路由/打分 |
-| 评测集偏小 | 28 题，单题权重 3.6% | 扩到 100+ 并按问题类型分桶 |
+| 评测集偏小 | 44 题（技术 28 + 领域 16） | 扩到 100+ 并按问题类型分桶 |
+| RST 转换是启发式的 | 表格/复杂 directive 可能降级成纯文本 | 换 `docutils` 走正规 AST；或直接抓 HTML 版文档 |
+| 领域库每次要联网抓 | 论文/文档更新需重跑 fetch | 加定时任务 + 内容指纹增量索引 |
 
 ---
 
-## 十、License
+## 十一、License
 
 MIT。语料版权归各开源项目所有，仅供学习使用。

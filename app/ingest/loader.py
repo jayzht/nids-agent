@@ -80,7 +80,13 @@ def iter_doc_files(root: Path) -> list[Path]:
     return sorted(files, key=lambda p: str(p.relative_to(root)))
 
 
-def load_document(path: Path, root: Path, kb: str, url_template: str = "") -> Document | None:
+def load_document(
+    path: Path,
+    root: Path,
+    kb: str,
+    url_template: str = "",
+    url_map: dict[str, str] | None = None,
+) -> Document | None:
     try:
         raw = path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
@@ -98,14 +104,17 @@ def load_document(path: Path, root: Path, kb: str, url_template: str = "") -> Do
         path=rel,
         title=title,
         text=text,
-        source_url=build_source_url(url_template, rel),
+        # 混合语料（多个来源）用 manifest 里的逐文件 URL；单一来源用模板
+        source_url=(url_map or {}).get(rel) or build_source_url(url_template, rel),
     )
 
 
-def load_corpus(root: Path, kb: str, url_template: str = "") -> list[Document]:
+def load_corpus(
+    root: Path, kb: str, url_template: str = "", url_map: dict[str, str] | None = None
+) -> list[Document]:
     docs: list[Document] = []
     for f in iter_doc_files(root):
-        doc = load_document(f, root, kb, url_template)
+        doc = load_document(f, root, kb, url_template, url_map)
         if doc is not None:
             docs.append(doc)
     return docs

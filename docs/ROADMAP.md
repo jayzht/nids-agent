@@ -5,7 +5,8 @@
 
 ## A. 必做（1~2 天，直接提升面试通过率）
 
-1. **换一个你自己的领域语料**
+1. ✅ **换一个你自己的领域语料**（已完成：`ids` 库，Suricata/Zeek/nDPI + RFC + arXiv，538 篇）
+   原始建议：
    现在的语料是技术文档，回答的是「框架怎么用」。建议再加一个非技术知识库（法律法规 / 医疗指南 / 公司制度 / 论文），
    只要 Markdown/PDF 都能进 `data/raw/<kb>/`。领域知识库能让你讲「业务」，而不只是「框架」。
    命令：`python scripts/fetch_corpus.py --only xxx` 或直接把文件丢进 `data/raw/<kb>/` 后 `POST /api/kbs`。

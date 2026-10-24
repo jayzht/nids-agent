@@ -46,7 +46,9 @@ async def chat(req: ChatRequest):
 
     if not req.stream:
         final: dict | None = None
-        async for ev in agent.astream(req.question, kbs=kbs, session_id=session_id):
+        async for ev in agent.astream(
+            req.question, kbs=kbs, session_id=session_id, sources=req.sources
+        ):
             if ev["type"] == "final":
                 final = ev
         if not final:
@@ -57,7 +59,9 @@ async def chat(req: ChatRequest):
         yield sse({"type": "start", "session_id": session_id,
                    "message_id": uuid.uuid4().hex[:12], "mode": req.mode})
         try:
-            async for ev in agent.astream(req.question, kbs=kbs, session_id=session_id):
+            async for ev in agent.astream(
+            req.question, kbs=kbs, session_id=session_id, sources=req.sources
+        ):
                 yield sse(ev)
         except asyncio.CancelledError:  # 客户端断开
             raise

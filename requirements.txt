@@ -11,6 +11,10 @@ langgraph>=1.0,<2
 langchain-core>=1.0,<2
 langchain-openai>=1.0,<2
 
+# ===== 语料采集：RST / HTML 转换（只在跑 fetch 脚本时需要） =====
+beautifulsoup4>=4.12
+html2text>=2024.2
+
 # ===== 可选：Qdrant 向量库后端（默认用内置 numpy 后端） =====
 # qdrant-client>=1.9
 

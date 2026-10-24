@@ -11,6 +11,9 @@ class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000, description="用户问题")
     kb: str | None = Field(None, description="只检索单个知识库")
     kbs: list[str] | None = Field(None, description="检索多个知识库")
+    sources: list[str] | None = Field(
+        None, description="知识库内的来源子集，如 ids 下的 suricata/zeek/rfc/papers"
+    )
     session_id: str | None = Field(None, description="会话 id，用于多轮记忆")
     stream: bool = True
     mode: Literal["graph", "react"] = Field("graph", description="graph=可控 CRAG 流程，react=自主工具调用")

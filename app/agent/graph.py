@@ -129,6 +129,7 @@ class RAGAgent:
             "intent": intent,
             "need_retrieval": need,
             "kbs": kbs,
+            "sources": state.get("sources") or [],
             # 每轮对话重置：这些字段是「本轮」的，不能从上一次检查点里带过来
             "queries": [],
             "candidates": [],
@@ -215,10 +216,13 @@ class RAGAgent:
         t0 = time.time()
         queries = state.get("queries") or [state["question"]]
         kbs = state.get("kbs") or None
+        prefixes = state.get("sources") or None
         best: dict[str, tuple[Any, str]] = {}
 
         for q in queries:
-            hits = await self.retriever.search(q, kbs=kbs, k=self.settings.candidate_k)
+            hits = await self.retriever.search(
+                q, kbs=kbs, k=self.settings.candidate_k, prefixes=prefixes
+            )
             for h in hits:
                 cid = h.chunk.chunk_id
                 if cid not in best or h.score > best[cid][0].score:
@@ -239,6 +243,7 @@ class RAGAgent:
                 "detail": {
                     "queries": queries,
                     "kbs": kbs or self.manager.names(),
+                    "sources": state.get("sources") or [],
                     "candidates": [
                         {"chunk_id": c["chunk_id"], "title": c["heading_path"] or c["title"],
                          "path": c["path"], "score": c["score"], "sources": c["sources"]}
@@ -444,6 +449,7 @@ class RAGAgent:
         question: str,
         kbs: list[str] | None = None,
         session_id: str | None = None,
+        sources: list[str] | None = None,
     ):
         """把图执行过程变成事件流，供 FastAPI SSE 直接转发。
 
@@ -453,6 +459,7 @@ class RAGAgent:
         inputs = {
             "question": question,
             "kbs": kbs or [],
+            "sources": sources or [],
             "session_id": session_id,
             "started_at": time.time(),
             "messages": [],

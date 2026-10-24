@@ -134,7 +134,7 @@ class KBManager:
                 progress(phase, cur, total, msg)
 
         report("load", 0, 1, "读取 Markdown 文件")
-        docs = load_corpus(root, name, url_template)
+        docs = load_corpus(root, name, url_template, manifest.get("urls"))
         if not docs:
             raise ValueError(f"{root} 下没有可用的 Markdown 文档")
         report("load", len(docs), len(docs), f"{len(docs)} 篇文档")
