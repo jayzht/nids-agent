@@ -13,3 +13,7 @@ data/feedback.jsonl
 
 # 临时文件
 tmp/
+
+# 流量样本：真实恶意流量不随仓库分发（授权 + 体积），按需下载
+data/pcaps/
+data/alerts/

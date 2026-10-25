@@ -65,6 +65,9 @@ class Finding:
     metrics: dict[str, Any] = field(default_factory=dict)
     evidence: list[int] = field(default_factory=list)   # 包序号
     knowledge_queries: list[str] = field(default_factory=list)  # 该去知识库查什么
+    src_ip: str = ""
+    dst_ip: str = ""
+    dst_port: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

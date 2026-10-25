@@ -57,7 +57,11 @@ def tshark_available() -> bool:
 
 def _run(cmd: list[str], timeout: float = 120.0) -> str:
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(
+            cmd, capture_output=True, timeout=timeout,
+            # 真实流量里常有不规范字节，不能让解码失败把整份分析炸掉
+            encoding="utf-8", errors="replace",
+        )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"tshark 超时（{timeout}s）：{' '.join(cmd[:4])}") from exc
     if proc.returncode != 0:

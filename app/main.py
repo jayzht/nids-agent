@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import chat, evals, kb, traffic
+from app.api import chat, evals, kb, siem, traffic
 from app.kb import get_kb_manager
 from app.settings import get_settings
 
@@ -67,6 +67,7 @@ app.include_router(chat.router)
 app.include_router(kb.router)
 app.include_router(evals.router)
 app.include_router(traffic.router)
+app.include_router(siem.router)
 
 
 @app.get("/healthz", tags=["ops"])
