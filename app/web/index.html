@@ -155,6 +155,7 @@
     <button data-mode="graph" class="on" title="固定编排：改写→检索→打分→生成→校验">CRAG 流程</button>
     <button data-mode="react" title="模型自主调用工具">ReAct Agent</button>
   </div>
+  <button class="btn" id="btnTraffic">流量取证</button>
   <button class="btn" id="btnEval">评测</button>
   <button class="btn" id="btnKb">知识库</button>
 </header>
@@ -262,7 +263,12 @@ function stepLine(step){
   else if (step.node === "grade") brief = `${(d.grades || []).filter(g => (g.score ?? 0) >= 1).length}/${(d.grades || []).length} 相关`;
   else if (step.node === "router") brief = `kbs=${(d.kbs || []).join(",") || "-"}`;
   else if (step.node === "generate" || step.node === "chat") brief = `${d.context_chars ?? ""} 字符上下文`;
-  else if (step.node === "verify") brief = `引用 ${(d.valid || []).join(",") || "无"}`;
+  else if (step.node === "verify") brief = d.packets ? `包号 ${(d.packets || []).slice(0,6).join(",")}` : `引用 ${(d.valid || []).join(",") || "无"}`;
+  else if (step.node === "load") brief = `${d.protocols ? Object.keys(d.protocols).join("/") : ""} · ${d.ms ?? ""}ms`;
+  else if (step.node === "triage") brief = `${(d || []).filter(p => p.pursue !== false).length} 条待查`;
+  else if (step.node === "collect") brief = `${(d.kinds || []).join(",")} · ${d.ms ?? ""}ms`;
+  else if (step.node === "ground") brief = `${(d.docs || []).join(" | ")}`;
+  else if (step.node === "report") brief = `${d.ms ?? ""}ms`;
   return `<div class="step"><div class="node">${esc(step.node || "")}</div>
     <div class="title">${esc(step.title || "")}</div>
     <div class="detail">${esc(brief)}</div></div>`;
@@ -516,6 +522,82 @@ async function runEval(mode){
     <table style="margin:10px 0"><tbody>${rows}</tbody></table>
     <h3 style="margin-top:14px">明细</h3>
     <table><thead><tr><th>问题</th><th>recall</th><th>Top1 文档</th></tr></thead><tbody>${detail}</tbody></table>`;
+}
+
+/* ---------------- 流量取证 ---------------- */
+$("#btnTraffic").onclick = async () => {
+  try {
+    const r = await fetch("/api/traffic/pcaps");
+    const items = await r.json();
+    const rows = items.map(i => `<tr>
+      <td style="font-family:var(--mono);font-size:11.5px">${esc(i.rel)}</td>
+      <td>${(i.size / 1024).toFixed(1)} KB</td>
+      <td><button class="btn" data-pcap="${esc(i.rel)}">分析</button></td></tr>`).join("");
+    openModal(`<h3>流量取证</h3>
+      <div style="font-size:12px;color:var(--fg2);margin-bottom:12px">
+        分析是「规则引擎出事实 → Agent 写报告」：每条结论都会带证据包号和文档引用。
+        样本在 <code>data/pcaps/samples/</code>，也可以把自己的 pcap 丢进 <code>data/pcaps/</code>。
+      </div>
+      <table><thead><tr><th>文件</th><th>大小</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="3" style="color:var(--fg2)">data/pcaps 下没有 pcap 文件</td></tr>'}</tbody></table>`);
+    document.querySelectorAll("[data-pcap]").forEach(b => b.onclick = () => runTraffic(b.dataset.pcap));
+  } catch (e) {
+    openModal(`<h3>流量取证</h3><div style="color:var(--red)">${esc(String(e))}</div>`);
+  }
+};
+
+async function runTraffic(rel) {
+  openModal(`<h3>${esc(rel)}</h3>
+    <div id="tSteps" style="margin-bottom:10px"></div>
+    <div class="answer" id="tReport"
+         style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:14px">
+      <span class="spin"></span> 分析中（规则引擎 + Agent，约 30 秒）…
+    </div>`);
+  let report = "", steps = [], buf = "";
+  try {
+    const resp = await fetch("/api/traffic/analyze", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pcap: rel }),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop();
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith("data:")) continue;
+        let ev;
+        try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        if (ev.type === "step") {
+          steps.push(ev);
+          $("#tSteps").innerHTML = steps.map(stepLine).join("");
+        } else if (ev.type === "token") {
+          report += ev.text;
+          $("#tReport").innerHTML = renderMd(report);
+        } else if (ev.type === "final") {
+          report = ev.answer || report;
+          let html = renderMd(report);
+          if (ev.citations && ev.citations.length) {
+            html += `<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px">
+              <div style="font-size:11px;color:var(--fg2);margin-bottom:6px">引用的知识库文档</div>` +
+              ev.citations.map(c => `<div style="font-family:var(--mono);font-size:11px;color:#9ccbfb">
+                [K${c.index}] ${esc(c.path)} · ${esc(c.title || "")}</div>`).join("") + `</div>`;
+          }
+          $("#tReport").innerHTML = html;
+        } else if (ev.type === "error") {
+          $("#tReport").innerHTML = `<p style="color:var(--red)">出错：${esc(ev.message)}</p>`;
+        }
+      }
+    }
+  } catch (e) {
+    $("#tReport").innerHTML = `<p style="color:var(--red)">请求失败：${esc(String(e.message || e))}</p>`;
+  }
+  if (!report) $("#tReport").innerHTML = "<p>（无输出）</p>";
 }
 
 /* 交互 */

@@ -11,6 +11,9 @@ langgraph>=1.0,<2
 langchain-core>=1.0,<2
 langchain-openai>=1.0,<2
 
+# ===== 生成样本流量（只在跑 make_sample_pcaps.py 时需要） =====
+scapy>=2.5
+
 # ===== 语料采集：RST / HTML 转换（只在跑 fetch 脚本时需要） =====
 beautifulsoup4>=4.12
 html2text>=2024.2

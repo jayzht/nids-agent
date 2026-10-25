@@ -42,6 +42,17 @@
 | 人机协同 | 未实现（见 ROADMAP） | `interrupt_before` + 人工审批；什么场景需要 |
 | 多 Agent | 未实现 | supervisor / handoff / 共享状态；什么时候不该上多 Agent |
 
+## 三·五、流量取证（pcap → 报告）
+
+| 知识点 | 代码位置 | 要点 |
+|---|---|---|
+| 确定性优先 | `app/traffic/analyzer.py` | 规则引擎先出事实，LLM 只做解释；为什么这样能压幻觉 |
+| 证据链 | `Finding.evidence` | 每个结论必须能指回包号，前端可点开核对 |
+| 双校验 | `traffic_graph.node_verify` | 包号 + 文档编号都要有，缺一个就重写 |
+| 工具安全 | `tools.resolve` / `_FILTER_OK` | 路径穿越、过滤器注入怎么防 |
+| 检测规则 | `detect_port_scan / dns_tunnel / beacon` | 阈值怎么定、误报怎么降、CV 是什么 |
+| 降级设计 | `pcap.tshark_available` | 没有 tshark 时如何优雅退化 |
+
 ## 四、幻觉与可控性
 
 | 知识点 | 代码位置 | 要点 |

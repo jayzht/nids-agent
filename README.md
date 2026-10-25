@@ -63,6 +63,7 @@ uvicorn app.main:app --port 8000     # http://127.0.0.1:8000
 | 检索质量（技术文档） | recall@6 **0.893** / MRR 0.757 / nDCG@6 0.791 | 28 题 golden set |
 | 检索质量（NIDS 领域） | recall@6 **1.00** / MRR 0.815 / nDCG@6 0.861 | 16 题 golden set |
 | 单次问答 | 16~40 秒（CPU 跑 qwen3:8b） | 4 次 LLM 调用；领域库 + `sources` 过滤更快 |
+| 流量取证 | 16~39 秒/份 pcap | 规则引擎 <1s，其余是 LLM；确定性结论没 LLM 也能出 |
 | 成本 | 0 元 | 全部本地 Ollama |
 
 > 数字不好看没关系，**能解释为什么**才是重点。比如 recall@6 只有 0.89，我会说：
@@ -119,7 +120,82 @@ curl -N -X POST localhost:8000/api/chat -H 'Content-Type: application/json' \
 这也解释了「多知识库」和「单库多来源」的分工：分库更适合**主题差异大**（技术文档 vs 领域文档），
 `kbs` 多选即可跨库检索；单库多来源适合**同一主题的不同侧面**（工具/规范/论文），用 `sources` 收窄。
 
-## 四、快速开始
+## 四、流量取证 Agent：pcap → 可复核的报告
+
+知识库解决「怎么解释」，但安全分析的一半是「看证据」。这一节把 pcap 接进来，
+做成一条和文档 RAG 平行的链路：
+
+```
+pcap ──▶ tshark 结构化提取 ──▶ 规则引擎（扫描/DNS隧道/beacon/可疑HTTP）
+                                      │  每条命中都带证据包号
+                                      ▼
+                              LangGraph Agent
+                    triage（决定查什么）→ collect（补证据）
+                              → ground（查 ids 知识库）
+                              → report → verify（包号 + 文档引用双校验）
+                                      │
+                                      ▼
+                   结论 + [pkt #12] + [K1] 双证据链
+```
+
+### 确定性优先（照搬 pcap-hunter 的哲学）
+
+| 层 | 负责什么 | 出了问题会怎样 |
+|---|---|---|
+| tshark | 协议解析、字段提取 | 不会，20 年积累 |
+| 规则引擎 | 计数、周期性、熵值等可解释判定 | 阈值可调，结论可复现 |
+| LLM | 解释「为什么可疑、对应哪种攻击、怎么处置」 | 最坏情况是解释得不好，**不会凭空造出包** |
+
+所以模型挂了、Ollama 没启动，`GET /api/traffic/findings/{pcap}` 依然返回完整的事实清单。
+
+### 四个可复现的样本
+
+`python scripts/make_sample_pcaps.py` 用 scapy 生成，随仓库提交到 `tests/fixtures/`：
+
+| 样本 | 内容 | 预期检测 |
+|---|---|---|
+| `benign_web.pcap` | DNS + HTTP 正常访问 | **0 命中**（验证不误报） |
+| `port_scan.pcap` | 单源扫 120 个端口，SYN 不走完握手 | `port_scan` (high) |
+| `dns_tunnel.pcap` | 40 个高熵长域名查询 | `dns_tunnel` (medium) |
+| `beacon_c2.pcap` | 每 60 秒一次 HTTP 心跳 + 明文 HTTP 打 443 | `beacon` + `cleartext_http` + `suspicious_http` |
+
+### 怎么用
+
+```bash
+# 界面：右上角「流量取证」→ 选样本 → 看报告（SSE 流式 + 执行轨迹）
+
+# 只跑确定性分析，不调 LLM（秒回）
+curl localhost:8000/api/traffic/findings/samples/port_scan.pcap
+
+# 完整 Agent 报告
+curl -N -X POST localhost:8000/api/traffic/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{"pcap":"samples/beacon_c2.pcap","question":"这是不是 C2 外联？"}'
+```
+
+实测：端口扫描 39s，C2 beacon 16s（CPU 跑 8B 模型）。报告形如：
+
+```
+## 结论
+高度疑似 C2 外联：12 次连接间隔高度规律（CV=0.00）[pkt #1,#4,#7...]，
+443 端口出现明文 HTTP [pkt #3,#6,#9...]
+## 证据链 / ## 建议处置 / ## 参考文档 [K1]..[K4]
+```
+
+### 踩过的坑
+
+- **tshark 不会把 443 上的明文当 HTTP**：只能退到 `tcp contains "User-Agent"` + 十六进制 payload 手工解析，
+  这反而成了一个很好的检测点（`cleartext_http`）。
+- **明文 HTTP 检测必须限定端口**：一开始忘了过滤，`benign_web.pcap` 里正常的 80 端口请求被误报成高危。
+- **模型会把源端口说成目标端口**：所以规则引擎把 `port_min/port_max` 算成指标直接喂进 prompt，
+  并强制要求「每条结论带包号」，人一眼就能核对。
+- **路径穿越**：`GET /api/traffic/findings/{pcap}` 用 `resolve()` 限制在 `data/pcaps` 下；
+  传给 tshark 的显示过滤器做了字符白名单（虽然 subprocess 无 shell，但仍然限制）。
+- **提示注入**：流量里的字符串会被模型当上下文，`tcp contains "User-Agent"` 抓到的内容里完全可以写
+  `ignore previous instructions`。目前只是把它当证据展示，**没有做隔离**——这是公开的已知风险
+  （见 `docs/RELATED_WORK.md` 里的论文 2607.14493），也是下一步最值得做的加固点。
+
+## 五、快速开始
 
 ### 0. 环境要求
 
@@ -180,7 +256,7 @@ EMBEDDING_MODEL=BAAI/bge-m3
 
 ---
 
-## 五、代码结构
+## 六、代码结构
 
 ```
 app/
@@ -211,19 +287,25 @@ app/
 │   ├── graph.py         ★ Corrective RAG 图：条件边 + 纠错循环 + 引用校验
 │   ├── tools.py         三个粒度不同的检索工具
 │   ├── react.py         ReAct Agent（自主工具调用）
+│   ├── traffic_graph.py ★ 流量取证图：证据 → 研判 → 报告 → 双校验
 │   └── prompts.py       全部提示词集中管理
 ├── eval/
 │   ├── dataset.jsonl    ★ 28 题 golden set（含期望文档与关键词）
 │   ├── metrics.py       recall / MRR / nDCG / 关键词覆盖 / 引用准确率
 │   └── runner.py        检索评测 + 端到端评测（LLM 裁判）
-└── web/index.html       零构建前端：SSE 渲染、执行轨迹、来源抽屉
+├── traffic/
+│   ├── pcap.py          tshark 字段提取 + 明文 HTTP 回退解析
+│   ├── analyzer.py      ★ 规则引擎：扫描 / DNS 隧道 / beacon / 可疑 UA / 明文协议
+│   ├── models.py        Packet / Flow / Finding（Findings 必须带证据包号）
+│   └── tools.py         取证服务：路径安全、结果缓存、证据渲染
+└── web/index.html       零构建前端：SSE 渲染、执行轨迹、来源抽屉、流量取证面板
 ```
 
 ★ 标记的是「面试最容易被问到、也最能体现思考」的四个文件。
 
 ---
 
-## 六、几个关键设计（为什么不是玩具版）
+## 七、几个关键设计（为什么不是玩具版）
 
 ### 1. 分块：按 Markdown 结构切，不是按 512 字符切
 
@@ -285,7 +367,7 @@ BM25 的价值在于「类名 / 错误码 / 版本号」这类精确词，属于
 
 ---
 
-## 七、API
+## 八、API
 
 ```bash
 # 流式问答（SSE）
@@ -315,7 +397,7 @@ curl -X POST localhost:8000/api/eval/run -H 'Content-Type: application/json' \
 
 ---
 
-## 八、评测
+## 九、评测
 
 ```bash
 make eval                                  # 检索评测（秒级，不调 LLM）
@@ -328,7 +410,7 @@ make sweep                                 # 扫超参，选最优融合方式�
 
 ---
 
-## 九、这个项目覆盖的岗位知识点
+## 十、这个项目覆盖的岗位知识点
 
 `docs/INTERVIEW_MAP.md` 是一张完整对照表（知识点 → 代码位置 → 面试问法），覆盖：
 
@@ -341,7 +423,7 @@ make sweep                                 # 扫超参，选最优融合方式�
 
 ---
 
-## 十、已知问题
+## 十一、已知问题
 
 | 问题 | 现状 | 怎么改 |
 |---|---|---|
@@ -353,9 +435,11 @@ make sweep                                 # 扫超参，选最优融合方式�
 | 评测集偏小 | 44 题（技术 28 + 领域 16） | 扩到 100+ 并按问题类型分桶 |
 | RST 转换是启发式的 | 表格/复杂 directive 可能降级成纯文本 | 换 `docutils` 走正规 AST；或直接抓 HTML 版文档 |
 | 领域库每次要联网抓 | 论文/文档更新需重跑 fetch | 加定时任务 + 内容指纹增量索引 |
+| 流量分析依赖 tshark | 没装就只能降级 | 容器镜像里固定 tshark 版本 |
+| 日志/流量未做注入隔离 | 已知风险，见 RELATED_WORK | 内容包裹 + 指令白名单 + 输出校验 |
 
 ---
 
-## 十一、License
+## 十二、License
 
 MIT。语料版权归各开源项目所有，仅供学习使用。

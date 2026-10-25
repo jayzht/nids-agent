@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     data_dir: Path = BASE_DIR / "data"
     raw_dir: Path = BASE_DIR / "data" / "raw"
     index_dir: Path = BASE_DIR / "data" / "index"
+    pcaps_dir: Path = BASE_DIR / "data" / "pcaps"
 
     # ---------- LLM（OpenAI 兼容协议：Ollama / DeepSeek / 通义 / vLLM 都能接） ----------
     llm_base_url: str = "http://127.0.0.1:11434/v1"
@@ -73,7 +74,7 @@ class Settings(BaseSettings):
         return self.index_dir
 
     def ensure_dirs(self) -> None:
-        for p in (self.raw_dir, self.index_dir):
+        for p in (self.raw_dir, self.index_dir, self.pcaps_dir):
             p.mkdir(parents=True, exist_ok=True)
 
 

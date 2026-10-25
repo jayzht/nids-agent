@@ -5,10 +5,12 @@ from __future__ import annotations
 from functools import lru_cache
 
 from app.agent.graph import RAGAgent
+from app.agent.traffic_graph import TrafficAgent
 from app.agent.react import ReActDocAgent
 from app.kb import get_kb_manager
 from app.retrieval.service import Retriever
 from app.settings import get_settings
+from app.traffic.tools import TrafficService
 
 
 @lru_cache
@@ -24,3 +26,13 @@ def get_rag_agent() -> RAGAgent:
 @lru_cache
 def get_react_agent() -> ReActDocAgent:
     return ReActDocAgent(get_retriever(), get_kb_manager(), get_settings())
+
+
+@lru_cache
+def get_traffic_service() -> TrafficService:
+    return TrafficService(get_settings().pcaps_dir)
+
+
+@lru_cache
+def get_traffic_agent() -> TrafficAgent:
+    return TrafficAgent(get_traffic_service(), get_retriever(), get_settings())

@@ -75,3 +75,10 @@ class EvalRequest(BaseModel):
     kb: str | None = None
     mode: Literal["retrieval", "end2end"] = "retrieval"
     top_k: int = 6
+
+
+class TrafficRequest(BaseModel):
+    pcap: str = Field(..., description="data/pcaps 下的相对路径，如 samples/port_scan.pcap")
+    question: str = Field("", max_length=1000, description="额外关注点，可留空")
+    session_id: str | None = None
+    stream: bool = True
