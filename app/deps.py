@@ -11,6 +11,7 @@ from app.agent.react import ReActDocAgent
 from app.kb import get_kb_manager
 from app.retrieval.service import Retriever
 from app.settings import get_settings
+from app.siem.store import AlertStore
 from app.traffic.tools import TrafficService
 
 
@@ -42,3 +43,8 @@ def get_traffic_agent() -> TrafficAgent:
 @lru_cache
 def get_fusion_agent() -> FusionAgent:
     return FusionAgent(get_traffic_service(), get_retriever(), get_settings())
+
+
+@lru_cache
+def get_siem_store() -> AlertStore:
+    return AlertStore(get_settings().siem_db)

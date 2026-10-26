@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     raw_dir: Path = BASE_DIR / "data" / "raw"
     index_dir: Path = BASE_DIR / "data" / "index"
     pcaps_dir: Path = BASE_DIR / "data" / "pcaps"
+    siem_db: Path = BASE_DIR / "data" / "siem.db"
 
     # ---------- LLM（OpenAI 兼容协议：Ollama / DeepSeek / 通义 / vLLM 都能接） ----------
     llm_base_url: str = "http://127.0.0.1:11434/v1"

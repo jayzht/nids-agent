@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.5.0 — SIEM 持久化 + 研判回写闭环
+
+- 存储层从内存 ring buffer 换成 **SQLite（WAL）**：`alerts` / `incidents` / `analyses` 三张表。
+- 去重改由数据库唯一索引保证，跨进程重启依然有效。
+- **结论回写**：研判结束自动写入 `analyses` 并把 incident 推进到 `triaged`；
+  新增 `GET /api/siem/incidents/{id}`（含告警与历史研判）与 `PATCH`（人工改状态 + 备注）。
+- 状态机 `open → triaged → closed`，刷新聚合不会覆盖人工状态。
+- 测试从 87 增至 103，新增持久化、跨实例去重、回写、状态机、API 闭环测试。
+
 ## v1.4.0 — 多 Agent 融合 + 真实样本 + 注入防护
 
 - **多 Agent 检测**：`behavior`（规则引擎）与 `signature`（Suricata 8.0.7 + ET Open 52,752 条规则）

@@ -289,24 +289,57 @@ python scripts/benchmark_real.py --write-doc
 还顺手修了一个更隐蔽的问题：模型会编造包号（这份 pcap 只有 3 个包，它引用了 `#12, #13`）。
 现在 `verify` 会把包号和 pcap 实际长度比对，越界就打回重写——**引用校验不能只查「有没有」，还要查「对不对」**。
 
-### 接 SIEM：告警流 → 聚合 → 研判
+### 接 SIEM：告警 → 聚合 → 研判 → 回写（SQLite 持久化）
 
-真实环境里 Suricata 一次扫描能吐几万条告警，直接喂 LLM 既贵又没用。所以加了一层聚合：
+真实环境里 Suricata 一次扫描能吐几万条告警，直接喂 LLM 既贵又没用。所以加了一层闭环：
 
 ```
 eve.json / Wazuh / ECS ──▶ 归一化 Alert ──▶ 去重(规则+实体+5min) ──▶ 按源IP聚合成 incident
                                                                         │
-                                                          知识库增强研判（SSE）
+                                                     ┌──────────────────┘
+                                                     ▼
+                                      Agent 研判（知识库增强，SSE）
+                                                     │
+                                     结论回写：report + verdict + citations
+                                                     │
+                                       incident 状态机 open → triaged → closed
 ```
+
+**三张表，各司其职**（`data/siem.db`，WAL 模式）：
+
+| 表 | 存什么 |
+|---|---|
+| `alerts` | 原始告警，`dedupe_key` 唯一索引 —— 去重靠数据库，不是进程内存 |
+| `incidents` | 聚合事件 + 状态机（status / verdict / status_note / analysis_count） |
+| `analyses` | 每次研判的完整结果（报告全文、引用、融合统计、模型、耗时） |
+
+**回写是闭环的关键**：研判结束自动落库并把 incident 从 `open` 推到 `triaged`；
+分析师确认后 `PATCH` 成 `closed` 并写备注；同一 incident 可以反复研判，历史全部保留。
 
 ```bash
-python scripts/emit_alerts.py --source all --post http://127.0.0.1:8123   # 把检测结果灌进去
+# 灌告警（Suricata / Wazuh / ECS 自动识别）
+python scripts/emit_alerts.py --source all --post http://127.0.0.1:8000
+
+# 聚合 + 研判 + 回写
 curl localhost:8000/api/siem/incidents
 curl -N -X POST localhost:8000/api/siem/incidents/<id>/analyze
+curl localhost:8000/api/siem/incidents/<id>          # 能看到 report / citations / 历史研判
+
+# 人工处置
+curl -X PATCH localhost:8000/api/siem/incidents/<id> \
+  -H 'Content-Type: application/json' \
+  -d '{"status":"closed","note":"已确认误报，域名已加白"}'
+
+curl localhost:8000/api/siem/stats
 ```
 
-支持三种格式（Suricata / Wazuh / Elastic ECS）自动识别。实测：13 条告警 → 5 个 incident
-→ 最高分 incident 22 秒出研判，引用到 Suricata 规则文档和 nDPI 风险定义。
+实测（重启服务后数据仍在）：
+
+```
+ingest 15 条 → 聚合 11 个 incident → 研判 1 个（22s）
+→ status: triaged, analysis_count: 1, report 1764 字符
+→ PATCH closed + 备注 → 重启进程 → 依然是 closed / 15 / 11 / 1
+```
 
 ### 踩过的坑
 
@@ -572,7 +605,7 @@ make sweep                                 # 扫超参，选最优融合方式�
 | 流量分析依赖 tshark | 没装就只能降级 | 容器镜像里固定 tshark 版本 |
 | 注入隔离 | ✅ 已做检测/隔离/消毒/输出校验 | 仍建议加一个专门的内容分类器 |
 | 真实样本覆盖有限 | 12 份，只有行为类攻击 | 扩到 CICIDS / CTU-13（体积大，需单独下载） |
-| SIEM 无持久化 | 内存 ring buffer，进程重启即丢 | 换 SQLite/ES，加消费位点 |
+| SIEM 消费位点 | 已落 SQLite，但还没有「从 eve.json 增量消费」的游标 | 加文件偏移量 + 定时任务 |
 
 ---
 
