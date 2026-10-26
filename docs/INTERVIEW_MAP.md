@@ -9,6 +9,7 @@
 | 文档解析 | `app/ingest/loader.py` | MDX 里的 import/JSX/frontmatter 对检索全是噪音，怎么清洗；PDF 怎么处理（版面分析 vs 纯文本） |
 | 分块策略 | `app/ingest/chunker.py` | 固定窗口 / 语义分块 / 结构分块各自适用场景；为什么代码块必须原子；chunk size 与召回的权衡 |
 | 去重 | `chunk_documents()` | 内容指纹（normalize + sha1）；同一文档多语言版本重复问题 |
+| 领域知识组织 | `scripts/fetch_mitre_attack.py` | 为什么把 ATT&CK 拆成「一技术一文档」；STIX 转 Markdown 的取舍 |
 | 多格式接入 | `app/ingest/converters.py` | RST/RFC/HTML 各自的坑；为什么在接入层归一化而不是让分块器认识所有格式 |
 | 多源语料治理 | `scripts/fetch_domain_corpus.py` | 混合语料怎么按来源过滤（`sources` 参数）；空壳页/重名/目录层级丢失 |
 | 元数据 | `Chunk.heading_path / path / source_url` | 元数据为什么比 chunk 内容还重要：过滤、引用、排序、增量更新 |

@@ -1,8 +1,14 @@
 [project]
 name = "devrag"
-version = "1.0.0"
-description = "DevRAG：基于 LangGraph + FastAPI + 混合检索的文档智能问答 Agent"
+version = "1.4.0"
+description = "DevRAG：文档 RAG + 网络流量取证的多 Agent 系统（LangGraph + FastAPI）"
+readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "scapy>=2.5"]
+fetch = ["beautifulsoup4>=4.12", "html2text>=2024.2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -12,3 +18,7 @@ filterwarnings = ["ignore::DeprecationWarning"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+exclude = ["data", ".venv"]
+
+[tool.ruff.lint]
+select = ["F", "E9", "I"]

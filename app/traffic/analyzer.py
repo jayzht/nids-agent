@@ -10,7 +10,6 @@ import math
 import statistics
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any
 
 from app.traffic import pcap as pc
 from app.traffic.sanitize import scan_untrusted

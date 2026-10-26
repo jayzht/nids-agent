@@ -89,6 +89,14 @@ GIT_SOURCES: list[GitSource] = [
         url_for=lambda rel_repo, rel_sub: f"https://docs.zeek.org/en/master/{rel_repo}.html",
     ),
     GitSource(
+        name="sigma",
+        repo="https://github.com/SigmaHQ/sigma.git",
+        prefix="sigma",
+        subdirs=["documentation"],
+        suffixes=(".md",),
+        url_for=lambda rel_repo, rel_sub: f"https://github.com/SigmaHQ/sigma/blob/master/{rel_repo}.md",
+    ),
+    GitSource(
         name="ndpi",
         repo="https://github.com/ntop/nDPI.git",
         prefix="ndpi",
@@ -291,19 +299,28 @@ def scan_urls(out_root: Path) -> dict[str, str]:
     for f in sorted(out_root.rglob("*.md")):
         rel = f.relative_to(out_root).as_posix()
         top, _, rest = rel.partition("/")
+        stem = rest.rsplit("/", 1)[-1][: -len(".md")]
+        url = ""
         if top == "suricata":
-            urls[rel] = f"https://docs.suricata.io/en/latest/{rest[:-3]}.html"
+            url = f"https://docs.suricata.io/en/latest/{stem}.html"
         elif top == "zeek":
-            urls[rel] = f"https://docs.zeek.org/en/master/{rest[:-3]}.html"
+            url = f"https://docs.zeek.org/en/master/{stem}.html"
         elif top == "ndpi":
-            urls[rel] = f"https://www.ntop.org/guides/ndpi/{Path(rest).stem}.html"
+            url = f"https://www.ntop.org/guides/ndpi/{Path(stem).stem}.html"
         elif top == "rfc":
-            num = Path(rest).stem.replace("rfc", "")
-            urls[rel] = RFC_BASE.format(n=num)
-        elif top == "papers":
-            m = re.match(r"(\d{4})_(\d{4,5})-", Path(rest).stem)
+            url = RFC_BASE.format(n=Path(stem).stem.replace("rfc", ""))
+        elif top == "sigma":
+            url = f"https://github.com/SigmaHQ/sigma/blob/master/documentation/{stem}.md"
+        elif top == "mitre":
+            m = re.match(r"(T[A]?\d{3}(?:\.\d{3})?)-", stem)
             if m:
-                urls[rel] = f"https://arxiv.org/abs/{m.group(1)}.{m.group(2)}"
+                kind = "tactics" if rest.startswith("tactics/") else "techniques"
+                url = f"https://attack.mitre.org/{kind}/{m.group(1)}/"
+        elif top == "papers":
+            m = re.match(r"(\d{4})_(\d{4,5})-", stem)
+            if m:
+                url = f"https://arxiv.org/abs/{m.group(1)}.{m.group(2)}"
+        urls[rel] = url          # 没有映射也保留条目，保证文件被计入索引
     return urls
 
 

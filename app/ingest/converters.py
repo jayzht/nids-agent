@@ -96,7 +96,7 @@ def rst_to_markdown(text: str) -> str:
         # 2) directive
         m = _DIRECTIVE_RE.match(line)
         if m:
-            indent, name, arg = m.group(1), m.group(2).lower(), m.group(3).strip()
+            name, arg = m.group(2).lower(), m.group(3).strip()
             body, nxt = _collect_indented(lines, i + 1)
             i = nxt
             if name in _CODE:

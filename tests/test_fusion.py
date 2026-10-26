@@ -107,3 +107,25 @@ def test_findings_sorted_by_stage():
     result = fuse(behavior, [])
     stages = [f["stage"] for f in result["findings"]]
     assert stages.index("recon") < stages.index("exfil")
+
+
+def test_signature_flow_claimed_only_once():
+    """两条行为 finding 都指向同一受害 IP 时，签名流不能被重复认领。"""
+    from app.signature.suricata import SignatureAlert
+
+    alerts = [SignatureAlert(sid=2100719, signature="GPL TELNET root login", category="x",
+                             severity="medium", src_ip="2.2.2.2", src_port=23,
+                             dst_ip="1.1.1.1", dst_port=40000, proto="TCP",
+                             pcap_cnt=15, timestamp="")]
+    behavior = [
+        behavior_finding(id="F1", dst_ip="2.2.2.2", dst_port=23),
+        behavior_finding(id="F2", dst_ip="2.2.2.2", dst_port=23),
+    ]
+    result = fuse(behavior, alerts)
+    corroborated = [f for f in result["findings"] if len(f["agents"]) == 2]
+    assert len(corroborated) == 1
+
+
+def test_behavior_without_entities_still_works():
+    result = fuse([behavior_finding(src_ip="", dst_ip="", dst_port=0)], [])
+    assert result["findings"][0]["agents"] == ["behavior"]

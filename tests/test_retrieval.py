@@ -86,3 +86,11 @@ def test_ndcg_and_recall_metrics():
     assert abs(mrr(paths, expected) - 0.5) < 1e-6
     assert ndcg_at_k(paths, expected, 2) > 0
     assert keyword_coverage("使用 Query 声明参数", ["Query", "Body"]) == 0.5
+
+
+def test_metrics_with_empty_input():
+    from app.eval.metrics import mrr, ndcg_at_k, recall_at_k
+
+    assert recall_at_k([], ["x"], 5) == 0.0
+    assert mrr([], ["x"]) == 0.0
+    assert ndcg_at_k([], ["x"], 5) == 0.0

@@ -214,7 +214,6 @@ class TrafficAgent:
         }
 
     async def node_ground(self, state: TrafficState) -> dict[str, Any]:
-        t0 = time.time()
         queries = [p["knowledge_query"] for p in state.get("plan") or [] if p.get("knowledge_query")]
         if not queries:
             return {"knowledge": [], "steps": [{"node": "ground", "title": "无需检索知识库", "detail": {}}]}

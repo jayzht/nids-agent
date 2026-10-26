@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import random
 from pathlib import Path
 
 from scapy.all import DNS, DNSQR, Ether, IP, Raw, TCP, UDP, wrpcap
@@ -100,7 +99,6 @@ def build_port_scan() -> list:
 def build_dns_tunnel() -> list:
     pkts = []
     src, dst = "192.168.1.77", "8.8.8.8"
-    rnd = random.Random(42)
     for i in range(40):
         blob = base64.b32encode(hashlib.sha256(f"secret-{i}".encode()).digest()).decode().lower().rstrip("=")
         qname = f"{blob[:31]}.exfil.example.com"
@@ -126,6 +124,27 @@ def build_beacon_c2() -> list:
             tcp(server, client, 443, 52000 + i, "SA", ts=ts + 0.10, seq=9000, ack=2001 + i * 10),
             tcp(client, server, 52000 + i, 443, "PA", req, ts=ts + 0.20, seq=2001 + i * 10, ack=9001),
         ]
+    return pkts
+
+
+def build_horizontal_scan() -> list:
+    """横向扫描：一个源扫 30 台主机的 445，Mirai/勒索前期最爱干的事。"""
+    pkts = []
+    src = "192.168.1.70"
+    for i in range(30):
+        dst = f"192.168.1.{100 + i}"
+        pkts.append(tcp(src, dst, 41000 + i, 445, "S", ts=i * 0.05, seq=5000 + i))
+    return pkts
+
+
+def build_bruteforce() -> list:
+    """同目标端口反复建连：SSH 口令爆破。"""
+    pkts = []
+    src, dst = "192.168.1.71", "192.168.1.20"
+    for i in range(30):
+        pkts.append(tcp(src, dst, 43000 + i, 22, "S", ts=i * 0.3, seq=6000 + i))
+        pkts.append(tcp(dst, src, 22, 43000 + i, "SA", ts=i * 0.3 + 0.02, seq=7000, ack=6001 + i))
+        pkts.append(tcp(src, dst, 43000 + i, 22, "A", ts=i * 0.3 + 0.03, seq=6001 + i, ack=7001))
     return pkts
 
 
@@ -156,6 +175,8 @@ def main() -> None:
         "dns_tunnel.pcap": build_dns_tunnel(),
         "beacon_c2.pcap": build_beacon_c2(),
         "prompt_injection.pcap": build_prompt_injection(),
+        "horizontal_scan.pcap": build_horizontal_scan(),
+        "bruteforce.pcap": build_bruteforce(),
     }
     FIXTURES.mkdir(parents=True, exist_ok=True)
     for name, pkts in samples.items():

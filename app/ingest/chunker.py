@@ -24,6 +24,14 @@ _FENCE_OPEN_RE = re.compile(r"^\s*(```|~~~)\s*([\w+#.-]*)")
 _FENCE_CLOSE_RE = re.compile(r"^\s*(```|~~~)\s*$")
 
 
+# 这些标题单独出现时不带任何信息量，检索时等于没标题
+_GENERIC_HEADINGS = {
+    "描述", "检测建议", "简介", "概述", "背景", "说明", "流程", "总结",
+    "summary", "overview", "details", "description", "detection", "introduction",
+    "content", "example", "examples", "notes",
+}
+
+
 def short_heading(section: "Section", doc_title: str, keep_levels: int = 2) -> str:
     """embed_text 用的短标题。
 
@@ -35,7 +43,12 @@ def short_heading(section: "Section", doc_title: str, keep_levels: int = 2) -> s
     titles = [h for _, h in section.headings if h]
     if titles and titles[0].strip().lower() == (doc_title or "").strip().lower():
         titles = titles[1:]
-    return " > ".join(titles[-keep_levels:])
+    kept = titles[-keep_levels:]
+    joined = " > ".join(kept)
+    # 只剩下「描述 / Summary」这类泛化标题时，退回文档标题（MITRE 技术文档就是这样）
+    if not kept or all(t.strip().lower() in _GENERIC_HEADINGS for t in kept):
+        return (doc_title or "").strip()
+    return joined
 
 
 @dataclass
