@@ -11,7 +11,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.api.schemas import TrafficRequest
-from app.deps import get_fusion_agent, get_traffic_agent, get_traffic_service
+from app.deps import get_fusion_agent, get_retriever, get_traffic_agent, get_traffic_service
+from app.signature.attack import AttackMapper, summarize
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/traffic", tags=["traffic"])
@@ -52,6 +53,27 @@ async def detectors():
         "behavior": {"available": True, "engine": "内置规则引擎"},
         "signature": {"available": available, "engine": "Suricata + ET Open", "reason": reason},
     }
+
+
+@router.get("/attack/{pcap:path}")
+async def attack_coverage(pcap: str):
+    """只跑行为检测 + ATT&CK 映射（不调 LLM），用来快速看覆盖了哪些技术。"""
+    import asyncio
+
+    try:
+        analysis = await asyncio.to_thread(get_traffic_service().analyze, pcap)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    mapper = AttackMapper(get_retriever())
+    findings = [f.to_dict() for f in analysis.findings]
+    enriched = await mapper.enrich(findings)
+    out = summarize(enriched)
+    out["pcap"] = pcap
+    out["findings"] = [
+        {"id": f["id"], "title": f["title"], "attack": [a["id"] for a in f["attack"]]}
+        for f in enriched
+    ]
+    return out
 
 
 @router.post("/analyze")

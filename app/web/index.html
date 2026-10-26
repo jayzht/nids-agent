@@ -589,6 +589,13 @@ async function runTraffic(rel, mode = "single") {
         } else if (ev.type === "final") {
           report = ev.answer || report;
           let html = renderMd(report);
+          const atk = ev.attack || null;
+          if (atk && atk.total) {
+            html += `<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px">
+              <div style="font-size:11px;color:var(--fg2);margin-bottom:6px">ATT&CK 覆盖（${atk.total} 个技术）</div>` +
+              atk.techniques.map(t => `<span class="badge ${t.confidence === "high" ? "ok" : t.confidence === "medium" ? "triaged" : "open"}"
+                 style="margin:2px 4px 2px 0" title="${esc(t.tactic)}">${esc(t.id)} ${esc(t.name)}</span>`).join("") + `</div>`;
+          }
           if (ev.citations && ev.citations.length) {
             html += `<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px">
               <div style="font-size:11px;color:var(--fg2);margin-bottom:6px">引用的知识库文档</div>` +
@@ -596,6 +603,17 @@ async function runTraffic(rel, mode = "single") {
                 [K${c.index}] ${esc(c.path)} · ${esc(c.title || "")}</div>`).join("") + `</div>`;
           }
           $("#tReport").innerHTML = html;
+          if (!atk) {
+            fetch(`/api/traffic/attack/${encodeURIComponent(rel)}`).then(r => r.ok ? r.json() : null)
+              .then(cov => {
+                if (!cov || !cov.total) return;
+                $("#tReport").insertAdjacentHTML("beforeend",
+                  `<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px">
+                     <div style="font-size:11px;color:var(--fg2);margin-bottom:6px">ATT&CK 覆盖（单 Agent 静态映射）</div>` +
+                  cov.techniques.map(t => `<span class="badge ok" style="margin:2px 4px 2px 0"
+                     title="${esc(t.tactic)}">${esc(t.id)} ${esc(t.name)}</span>`).join("") + `</div>`);
+              }).catch(() => {});
+          }
         } else if (ev.type === "error") {
           $("#tReport").innerHTML = `<p style="color:var(--red)">出错：${esc(ev.message)}</p>`;
         }

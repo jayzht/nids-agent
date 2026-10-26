@@ -68,6 +68,18 @@ def test_traffic_findings_preview(client):
     assert d["packets"] == 160 and d["findings"][0]["kind"] == "port_scan"
 
 
+def test_traffic_attack_coverage(client):
+    d = client.get("/api/traffic/attack/samples/port_scan.pcap").json()
+    assert d["total"] >= 1
+    ids = {t["id"] for t in d["techniques"]}
+    assert "T1046" in ids
+    assert d["findings"][0]["attack"]
+
+
+def test_traffic_attack_missing_file(client):
+    assert client.get("/api/traffic/attack/samples/nope.pcap").status_code == 404
+
+
 def test_traffic_findings_missing_file(client):
     assert client.get("/api/traffic/findings/samples/nope.pcap").status_code == 404
 

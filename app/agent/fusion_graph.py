@@ -32,6 +32,7 @@ from app.core.llm import get_chat_model, with_no_think
 from app.core.text import truncate
 from app.retrieval.service import Retriever
 from app.settings import BASE_DIR, Settings
+from app.signature.attack import AttackMapper, coverage_block, summarize, technique_ids
 from app.signature.fusion import findings_block, fuse
 from app.signature.suricata import SignatureAlert, SuricataRunner, aggregate_alerts
 from app.traffic.sanitize import new_nonce, validate_report, wrap_untrusted
@@ -63,7 +64,9 @@ REPORT_SYSTEM = """你是多 Agent 网络取证系统的裁决者。两个检测
 - 包号用 `[pkt #12]`；签名用 `[sig:2100719]`；文档用 `[K1]`；
 - 三者都必须真实存在于给定内容中，禁止编造；
 - **只要引用了签名检测结果，就必须写成 `[sig:数字]` 的方括号格式**，不要只写裸 SID；
-- 输出结构：## 结论 / ## 双源印证 / ## 单源线索 / ## 攻击链时序 / ## 建议处置 / ## 参考文档。"""
+- 输出结构：## 结论 / ## 双源印证 / ## 单源线索 / ## 攻击链时序 / ## ATT&CK 覆盖 / ## 建议处置 / ## 参考文档；
+- 「ATT&CK 覆盖」一节必须列出给定列表里的技术编号（如 T1046），按战术顺序排列，
+  并说明每个技术是被哪条证据支撑的；不要编造不在列表里的技术编号。"""
 
 REPORT_USER = """{question}
 
@@ -75,6 +78,9 @@ REPORT_USER = """{question}
 
 【融合后的候选结论（确定性，含置信度与阶段）】
 {fused}
+
+【ATT&CK 技术覆盖（由技术文档库映射）】
+{attack}
 
 【知识库参考资料】
 {knowledge}
@@ -92,6 +98,7 @@ class FusionState(TypedDict, total=False):
     signature_flows: list[dict]
     fused: list[dict]
     fusion_stats: dict
+    attack: dict
     knowledge: list[dict]
     report: str
     citations: list[dict]
@@ -116,6 +123,7 @@ class FusionAgent:
         g.add_node("behavior", self.node_behavior)
         g.add_node("signature", self.node_signature)
         g.add_node("fuse", self.node_fuse)
+        g.add_node("attack", self.node_attack)
         g.add_node("ground", self.node_ground)
         g.add_node("report", self.node_report)
         g.add_node("verify", self.node_verify)
@@ -124,7 +132,8 @@ class FusionAgent:
         g.add_edge(START, "signature")     # 两个 Agent 并行
         g.add_edge("behavior", "fuse")
         g.add_edge("signature", "fuse")    # join：两个都完成才融合
-        g.add_edge("fuse", "ground")
+        g.add_edge("fuse", "attack")
+        g.add_edge("attack", "ground")
         g.add_edge("ground", "report")
         g.add_edge("report", "verify")
         g.add_conditional_edges("verify", self.route_after_verify,
@@ -189,6 +198,25 @@ class FusionAgent:
                     f"单源 {result['stats']['behavior_only'] + result['stats']['signature_only']} 条"
                 ),
                 "detail": {**result["stats"], "ms": round((time.time() - t0) * 1000)},
+            }],
+        }
+
+    async def node_attack(self, state: FusionState) -> dict[str, Any]:
+        """把融合结果映射到 ATT&CK：行为走静态表，签名走关键词 + 知识库语义兜底。"""
+        t0 = time.time()
+        mapper = AttackMapper(self.retriever)
+        findings = await mapper.enrich(list(state.get("fused") or []))
+        coverage = summarize(findings)
+        return {
+            "fused": findings,
+            "attack": coverage,
+            "steps": [{
+                "agent": "attack",
+                "node": "attack",
+                "title": f"ATT&CK 映射：{coverage['total']} 个技术 / {len(coverage['tactics'])} 个战术",
+                "detail": {"techniques": [
+                    f"{t['id']} {t['name']} ({t['confidence']})" for t in coverage["techniques"]
+                ], "ms": round((time.time() - t0) * 1000)},
             }],
         }
 
@@ -283,6 +311,7 @@ class FusionAgent:
                 behavior=behavior_block,
                 signature=signature_block,
                 fused=findings_block(state.get("fused") or []),
+                attack=coverage_block(state.get("attack") or {}),
                 knowledge=k_block,
             )),
         ])
@@ -315,6 +344,11 @@ class FusionAgent:
         bad_sigs = [n for n in sigs if n not in valid_sigs]
         if bad_sigs:
             warnings.append(f"引用了不存在的签名 {bad_sigs[:5]}")
+
+        mapped_tech = {t["id"] for t in (state.get("attack") or {}).get("techniques", [])}
+        bad_tech = [t for t in technique_ids(report) if t not in mapped_tech]
+        if bad_tech:
+            warnings.append(f"引用了未映射的 ATT&CK 技术 {bad_tech[:5]}")
 
         needs_sig = any("signature" in f["agents"] for f in (state.get("fused") or []))
         if not has_findings:
@@ -392,6 +426,7 @@ class FusionAgent:
             "answer": values.get("report", ""),
             "citations": values.get("citations", []),
             "warnings": values.get("warnings", []),
+            "attack": values.get("attack", {}),
             "session_id": session_id,
             "message_id": uuid.uuid4().hex[:12],
             "verdict": values.get("verdict", ""),

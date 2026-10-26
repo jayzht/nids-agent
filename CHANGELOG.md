@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.7.0 — ATT&CK 自动映射
+
+- `app/signature/attack.py`：三层映射（行为静态表 / 签名关键词 / ATT&CK 知识库语义兜底），
+  置信度分 high/medium/low，避免把猜测当结论。
+- 融合图新增 `attack` 节点，报告强制输出「ATT&CK 覆盖」并按战术顺序排列；
+  引用未映射的技术编号会被 `verify` 打回。
+- 新增 `GET /api/traffic/attack/{pcap}`：不调 LLM 的覆盖度查询。
+- 前端在报告下方渲染 ATT&CK 技术徽章。
+- 测试 116 → 131。
+
 ## v1.6.0 — 增量消费 + SIEM 面板 + 真实样本扩到 30 份
 
 - **eve.json 增量消费**：SQLite 游标表（path/inode/offset/lines），支持重启续读、
