@@ -156,6 +156,8 @@ class TrafficAnalyzer:
                 continue
             entropies = [shannon_entropy(q["name"].split(".")[0]) for q in long_names]
             avg_entropy = sum(entropies) / len(entropies)
+            src_ip = long_names[0].get("src", "")
+            dst_ip = long_names[0].get("dst", "")
             findings.append(
                 Finding(
                     id="", kind="dns_tunnel", severity="high" if avg_entropy > 4.3 else "medium",
@@ -165,6 +167,7 @@ class TrafficAnalyzer:
                         f"平均香农熵 {avg_entropy:.2f} bit/char。正常业务域名通常远低于这个值，"
                         f"这种模式常见于 DNS 隧道外传或 C2 回连。"
                     ),
+                    src_ip=src_ip, dst_ip=dst_ip, dst_port=53,
                     metrics={"unique_long_names": len(unique), "avg_entropy": round(avg_entropy, 2),
                              "base_domain": base},
                     evidence=[q["no"] for q in long_names[:12]],

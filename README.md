@@ -66,6 +66,7 @@ uvicorn app.main:app --port 8000     # http://127.0.0.1:8000
 | 流量取证 | 16~39 秒/份 pcap | 规则引擎 <1s，其余是 LLM；确定性结论没 LLM 也能出 |
 | 真实恶意流量 | 12 份，**5 份产生告警（42%）**，误报对照 0 触发 | 见 `docs/REAL_TRAFFIC_BENCHMARK.md` |
 | 提示注入 | 检测 + 隔离 + 消毒 + 输出校验 | 对抗样本验证：模型没有照做，反而把注入当攻击上报 |
+| 多 Agent 融合 | 行为 + Suricata(52,752 条 ET 规则) 并行 | dnscat2 的 4,837 条告警 → 1 条结论 |
 | 成本 | 0 元 | 全部本地 Ollama |
 
 > 数字不好看没关系，**能解释为什么**才是重点。比如 recall@6 只有 0.89，我会说：
@@ -183,6 +184,58 @@ curl -N -X POST localhost:8000/api/traffic/analyze \
 443 端口出现明文 HTTP [pkt #3,#6,#9...]
 ## 证据链 / ## 建议处置 / ## 参考文档 [K1]..[K4]
 ```
+
+### 多 Agent 融合：行为检测 + 签名检测
+
+单个检测器一定会有盲区：行为规则抓不到「只有几个包的漏洞利用」，签名规则抓不到「未知变种」。
+所以拆成两个 Agent 并行跑，再仲裁：
+
+```
+                ┌─────────────────────────────┐
+                │  behavior Agent             │  统计/行为：扫描、爆破、beacon、隧道
+START ──────────┤                             ├──┐
+                │  signature Agent            │  │   Suricata 8.0.7 + ET Open（52,752 条规则）
+                └─────────────────────────────┘  │
+                                                 ▼
+                                    fuse（实体关联 + 置信度 + 攻击阶段）
+                                                 │
+                                    ground → report → verify
+```
+
+LangGraph 里 `behavior` 和 `signature` 在同一超级步并发，`fuse` 等两者都完成才执行（fan-out / join）。
+
+**融合不是拼接**，做了三件事：
+
+1. **实体关联**：行为 Agent 说「186.220.245.254 → 192.168.0.2:23 重试 42 次」，
+   签名 Agent 说「192.168.0.2:23 → 攻击者:xxxxx 命中 GPL TELNET root login」——
+   方向是反的，只能按 `(IP, 端口)` 关联。先端口级匹配，端口对不上才退化成 IP 级，
+   否则一个受害者 IP 会把所有无关流合并进来（这是第一版踩的坑）。
+2. **定级**：双源印证 0.93 / 仅签名 0.78 / 仅行为 0.55；`ET INFO` 这类信息规则不参与定级。
+3. **排序**：按攻击阶段（侦察 → 凭据 → 利用 → C2 → 外传）而不是按告警条数。
+
+真实效果（Mirai 样本）：
+
+| Agent | 原始输出 |
+|---|---|
+| behavior | 1 条（42 次重试） |
+| signature | **144 条告警 / 75 个流** |
+| 融合后 | **1 条双源印证（0.93）+ 3 条单源线索** |
+
+dnscat2 更夸张：**4,837 条 Suricata 告警 → 融合成 1 条「数据外传」结论**。
+这正是需要融合层的原因——原始告警不可能直接喂给 LLM。
+
+```bash
+# 规则与镜像（一次性）
+python scripts/fetch_suricata_rules.py
+
+# 多 Agent 分析
+curl -N -X POST localhost:8000/api/traffic/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{"pcap":"real/mirai/2016-11-07-10:35.pcap","mode":"multi"}'
+```
+
+界面里每个 pcap 现在有两个按钮：**单 Agent** / **多 Agent 融合**。
+没有 docker 时签名 Agent 自动降级，行为检测照常工作。
 
 ### 在真实恶意流量上验证（不是自己造的数据）
 
@@ -348,11 +401,15 @@ app/
 │   ├── tools.py         三个粒度不同的检索工具
 │   ├── react.py         ReAct Agent（自主工具调用）
 │   ├── traffic_graph.py ★ 流量取证图：证据 → 研判 → 报告 → 双校验
+│   ├── fusion_graph.py  ★ 多 Agent：行为 ∥ 签名 → 融合 → 裁决
 │   └── prompts.py       全部提示词集中管理
 ├── eval/
 │   ├── dataset.jsonl    ★ 28 题 golden set（含期望文档与关键词）
 │   ├── metrics.py       recall / MRR / nDCG / 关键词覆盖 / 引用准确率
 │   └── runner.py        检索评测 + 端到端评测（LLM 裁判）
+├── signature/
+│   ├── suricata.py      docker 调 Suricata + ET Open，解析 eve.json
+│   └── fusion.py        ★ 实体关联 / 置信度 / 攻击阶段排序
 ├── siem/
 │   ├── parsers.py       三种格式归一化（Suricata / Wazuh / ECS）
 │   └── store.py         去重 + 按实体聚合成 incident

@@ -82,3 +82,6 @@ class TrafficRequest(BaseModel):
     question: str = Field("", max_length=1000, description="额外关注点，可留空")
     session_id: str | None = None
     stream: bool = True
+    mode: Literal["single", "multi"] = Field(
+        "single", description="single=只跑行为检测，multi=行为+签名双 Agent 融合"
+    )

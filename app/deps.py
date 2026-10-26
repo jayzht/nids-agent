@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from app.agent.graph import RAGAgent
+from app.agent.fusion_graph import FusionAgent
 from app.agent.traffic_graph import TrafficAgent
 from app.agent.react import ReActDocAgent
 from app.kb import get_kb_manager
@@ -36,3 +37,8 @@ def get_traffic_service() -> TrafficService:
 @lru_cache
 def get_traffic_agent() -> TrafficAgent:
     return TrafficAgent(get_traffic_service(), get_retriever(), get_settings())
+
+
+@lru_cache
+def get_fusion_agent() -> FusionAgent:
+    return FusionAgent(get_traffic_service(), get_retriever(), get_settings())

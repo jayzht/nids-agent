@@ -269,7 +269,8 @@ function stepLine(step){
   else if (step.node === "collect") brief = `${(d.kinds || []).join(",")} · ${d.ms ?? ""}ms`;
   else if (step.node === "ground") brief = `${(d.docs || []).join(" | ")}`;
   else if (step.node === "report") brief = `${d.ms ?? ""}ms`;
-  return `<div class="step"><div class="node">${esc(step.node || "")}</div>
+  const agent = step.agent ? `<span style="color:#8b95a7">[${esc(step.agent)}]</span> ` : "";
+  return `<div class="step"><div class="node">${agent}${esc(step.node || "")}</div>
     <div class="title">${esc(step.title || "")}</div>
     <div class="detail">${esc(brief)}</div></div>`;
 }
@@ -532,7 +533,8 @@ $("#btnTraffic").onclick = async () => {
     const rows = items.map(i => `<tr>
       <td style="font-family:var(--mono);font-size:11.5px">${esc(i.rel)}</td>
       <td>${(i.size / 1024).toFixed(1)} KB</td>
-      <td><button class="btn" data-pcap="${esc(i.rel)}">分析</button></td></tr>`).join("");
+      <td><button class="btn" data-pcap="${esc(i.rel)}" data-mode="single">单 Agent</button>
+          <button class="btn" data-pcap="${esc(i.rel)}" data-mode="multi">多 Agent 融合</button></td></tr>`).join("");
     openModal(`<h3>流量取证</h3>
       <div style="font-size:12px;color:var(--fg2);margin-bottom:12px">
         分析是「规则引擎出事实 → Agent 写报告」：每条结论都会带证据包号和文档引用。
@@ -540,14 +542,15 @@ $("#btnTraffic").onclick = async () => {
       </div>
       <table><thead><tr><th>文件</th><th>大小</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan="3" style="color:var(--fg2)">data/pcaps 下没有 pcap 文件</td></tr>'}</tbody></table>`);
-    document.querySelectorAll("[data-pcap]").forEach(b => b.onclick = () => runTraffic(b.dataset.pcap));
+    document.querySelectorAll("[data-pcap]").forEach(b => b.onclick = () => runTraffic(b.dataset.pcap, b.dataset.mode));
   } catch (e) {
     openModal(`<h3>流量取证</h3><div style="color:var(--red)">${esc(String(e))}</div>`);
   }
 };
 
-async function runTraffic(rel) {
+async function runTraffic(rel, mode = "single") {
   openModal(`<h3>${esc(rel)}</h3>
+    <div id="tMode" class="badge" style="margin-bottom:8px">${mode === "multi" ? "多 Agent：行为 + 签名（Suricata）" : "单 Agent：行为检测"}</div>
     <div id="tSteps" style="margin-bottom:10px"></div>
     <div class="answer" id="tReport"
          style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:14px">
@@ -557,7 +560,7 @@ async function runTraffic(rel) {
   try {
     const resp = await fetch("/api/traffic/analyze", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pcap: rel }),
+      body: JSON.stringify({ pcap: rel, mode }),
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const reader = resp.body.getReader();

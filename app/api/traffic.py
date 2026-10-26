@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.api.schemas import TrafficRequest
-from app.deps import get_traffic_agent, get_traffic_service
+from app.deps import get_fusion_agent, get_traffic_agent, get_traffic_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/traffic", tags=["traffic"])
@@ -42,9 +42,21 @@ async def findings(pcap: str):
     return out
 
 
+@router.get("/detectors")
+async def detectors():
+    """各检测器的可用性，前端用来决定是否允许选多 Agent。"""
+    from app.deps import get_fusion_agent as _fa
+
+    available, reason = _fa().suricata.available()
+    return {
+        "behavior": {"available": True, "engine": "内置规则引擎"},
+        "signature": {"available": available, "engine": "Suricata + ET Open", "reason": reason},
+    }
+
+
 @router.post("/analyze")
 async def analyze(req: TrafficRequest):
-    agent = get_traffic_agent()
+    agent = get_fusion_agent() if req.mode == "multi" else get_traffic_agent()
     session_id = req.session_id or uuid.uuid4().hex
 
     if not req.stream:

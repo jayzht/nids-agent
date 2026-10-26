@@ -36,7 +36,8 @@ MAIN_FIELDS = [
     "_ws.col.Info",
 ]
 
-DNS_FIELDS = ["frame.number", "dns.qry.name", "dns.flags.response", "dns.flags.rcode"]
+DNS_FIELDS = ["frame.number", "dns.qry.name", "dns.flags.response", "dns.flags.rcode",
+              "ip.src", "ip.dst"]
 HTTP_FIELDS = [
     "frame.number",
     "http.request.method",
@@ -139,7 +140,7 @@ def read_packets(path: Path) -> list[Packet]:
 def read_dns(path: Path) -> list[dict]:
     rows = read_fields(path, DNS_FIELDS, display_filter="dns")
     out = []
-    for no, name, is_resp, rcode in rows:
+    for no, name, is_resp, rcode, src, dst in rows:
         if not name:
             continue
         out.append(
@@ -148,6 +149,8 @@ def read_dns(path: Path) -> list[dict]:
                 "name": name,
                 "response": (is_resp or "").strip() in {"1", "True", "true"},
                 "rcode": rcode or "0",
+                "src": src,
+                "dst": dst,
             }
         )
     return out
