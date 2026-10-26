@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     index_dir: Path = BASE_DIR / "data" / "index"
     pcaps_dir: Path = BASE_DIR / "data" / "pcaps"
     siem_db: Path = BASE_DIR / "data" / "siem.db"
+    # 配置后服务启动时会自动 tail 这些 eve.json（相对路径按 BASE_DIR 解析）
+    siem_tail_paths: list[str] = Field(default_factory=list)
+    siem_tail_interval: float = 5.0
 
     # ---------- LLM（OpenAI 兼容协议：Ollama / DeepSeek / 通义 / vLLM 都能接） ----------
     llm_base_url: str = "http://127.0.0.1:11434/v1"

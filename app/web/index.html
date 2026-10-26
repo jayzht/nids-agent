@@ -134,6 +134,9 @@
     border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
   @keyframes sp{to{transform:rotate(360deg)}}
   .badge{font-size:10.5px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--fg2)}
+  .badge.open{color:var(--amber);border-color:rgba(210,153,34,.35);background:rgba(210,153,34,.1)}
+  .badge.triaged{color:#7cb8f8;border-color:rgba(77,158,247,.35);background:rgba(77,158,247,.1)}
+  .badge.closed{color:var(--green);border-color:rgba(63,185,80,.35);background:rgba(63,185,80,.1)}
   .badge.ok{color:var(--green);border-color:rgba(63,185,80,.35);background:rgba(63,185,80,.1)}
   .badge.warn{color:var(--amber);border-color:rgba(210,153,34,.35);background:rgba(210,153,34,.1)}
   .fb{display:flex;gap:6px;margin-top:8px}
@@ -155,6 +158,7 @@
     <button data-mode="graph" class="on" title="固定编排：改写→检索→打分→生成→校验">CRAG 流程</button>
     <button data-mode="react" title="模型自主调用工具">ReAct Agent</button>
   </div>
+  <button class="btn" id="btnSiem">告警研判</button>
   <button class="btn" id="btnTraffic">流量取证</button>
   <button class="btn" id="btnEval">评测</button>
   <button class="btn" id="btnKb">知识库</button>
@@ -602,6 +606,131 @@ async function runTraffic(rel, mode = "single") {
   }
   if (!report) $("#tReport").innerHTML = "<p>（无输出）</p>";
 }
+
+/* ---------------- SIEM 告警研判 ---------------- */
+async function openSiem() {
+  openModal(`<div id="siemRoot"><h3>告警研判</h3>
+    <div style="color:var(--fg2);font-size:12px"><span class="spin"></span> 加载中…</div></div>`);
+  await refreshSiem();
+}
+
+async function refreshSiem() {
+  const [stats, inc] = await Promise.all([
+    fetch("/api/siem/stats").then(r => r.json()),
+    fetch("/api/siem/incidents").then(r => r.json()),
+  ]);
+  const sev = stats.by_severity || {};
+  const status = stats.incidents || {};
+  const rows = (inc.incidents || []).map(i => `
+    <tr>
+      <td><span class="badge ${i.status}">${i.status}</span></td>
+      <td style="font-family:var(--mono);font-size:11.5px">${esc(i.src_ip)}</td>
+      <td>${i.severity}</td>
+      <td>${i.score}</td>
+      <td>${i.alert_count}</td>
+      <td style="font-size:11px;color:var(--fg2)">${esc((i.rules || []).slice(0,2).map(r => r[0]).join(' / '))}</td>
+      <td style="white-space:nowrap">
+        <button class="btn" data-act="detail" data-id="${esc(i.id)}">详情</button>
+        <button class="btn primary" data-act="analyze" data-id="${esc(i.id)}">研判</button>
+        ${i.status !== "closed" ? `<button class="btn" data-act="close" data-id="${esc(i.id)}">关闭</button>` : ""}
+      </td>
+    </tr>`).join("");
+
+  $("#siemRoot").innerHTML = `
+    <h3>告警研判</h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <span class="badge">告警 ${stats.alerts}</span>
+      <span class="badge open">open ${status.open || 0}</span>
+      <span class="badge triaged">triaged ${status.triaged || 0}</span>
+      <span class="badge closed">closed ${status.closed || 0}</span>
+      <span class="badge">研判 ${stats.analyses}</span>
+      <span class="badge">高危 ${sev.high || 0}</span>
+    </div>
+    <table><thead><tr><th>状态</th><th>源 IP</th><th>级别</th><th>分数</th><th>告警</th><th>主要规则</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="7" style="color:var(--fg2)">暂无告警，先跑 scripts/emit_alerts.py --post</td></tr>'}</tbody></table>
+    <div id="siemDetail" style="margin-top:16px"></div>`;
+
+  document.querySelectorAll("#siemRoot [data-act]").forEach(b => {
+    b.onclick = () => {
+      if (b.dataset.act === "analyze") runSiemAnalyze(b.dataset.id);
+      else if (b.dataset.act === "detail") openIncident(b.dataset.id);
+      else closeIncident(b.dataset.id);
+    };
+  });
+}
+
+async function runSiemAnalyze(id) {
+  $("#siemDetail").innerHTML = `<h3 style="font-size:14px">研判 ${esc(id)}</h3>
+    <div id="sSteps" style="margin-bottom:8px"></div>
+    <div class="answer" id="sReport" style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:12px">
+      <span class="spin"></span> 分析中…</div>`;
+  let report = "", steps = [], buf = "";
+  try {
+    const resp = await fetch(`/api/siem/incidents/${encodeURIComponent(id)}/analyze`, { method: "POST" });
+    const reader = resp.body.getReader(); const dec = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split("\n\n"); buf = parts.pop();
+      for (const part of parts) {
+        const line = part.trim(); if (!line.startsWith("data:")) continue;
+        let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        if (ev.type === "step") { steps.push(ev); $("#sSteps").innerHTML = steps.map(stepLine).join(""); }
+        else if (ev.type === "token") { report += ev.text; $("#sReport").innerHTML = renderMd(report); }
+        else if (ev.type === "final") {
+          report = ev.answer || report;
+          let html = renderMd(report);
+          if (ev.writeback) {
+            html += `<div style="margin-top:12px" class="badge closed">已回写：incident → triaged</div>`;
+          }
+          $("#sReport").innerHTML = html;
+          setTimeout(refreshSiem, 600);
+        } else if (ev.type === "error") {
+          $("#sReport").innerHTML = `<p style="color:var(--red)">${esc(ev.message)}</p>`;
+        }
+      }
+    }
+  } catch (e) {
+    $("#sReport").innerHTML = `<p style="color:var(--red)">${esc(String(e))}</p>`;
+  }
+}
+
+async function openIncident(id) {
+  const d = await fetch(`/api/siem/incidents/${encodeURIComponent(id)}`).then(r => r.json());
+  const alerts = (d.alerts || []).map(a => `<tr>
+      <td>${a.ts ? new Date(a.ts * 1000).toLocaleTimeString() : '-'}</td>
+      <td style="font-family:var(--mono);font-size:11px">${esc(a.src_ip)}</td>
+      <td style="font-size:11.5px">${esc(a.rule)}</td>
+      <td>${a.severity}</td></tr>`).join("");
+  const analyses = (d.analyses || []).map((a, i) => `
+      <details ${i === 0 ? "open" : ""} style="margin-bottom:8px">
+        <summary style="cursor:pointer;font-size:12px;color:#9ccbfb">
+          研判 #${a.id} · ${esc(a.verdict)} · ${new Date(a.created_at * 1000).toLocaleString()}
+        </summary>
+        <div class="answer" style="margin-top:8px;font-size:12px">${renderMd(a.report || "")}</div>
+      </details>`).join("") || `<div style="color:var(--fg2);font-size:12px">还没有研判记录</div>`;
+
+  $("#siemDetail").innerHTML = `
+    <h3 style="font-size:14px">${esc(d.src_ip)} · <span class="badge ${d.status}">${d.status}</span></h3>
+    ${d.status_note ? `<div style="font-size:12px;color:var(--fg2);margin-bottom:8px">备注：${esc(d.status_note)}</div>` : ""}
+    <div style="font-size:12px;color:var(--fg2);margin-bottom:6px">告警明细（${d.alerts.length}）</div>
+    <table><thead><tr><th>时间</th><th>源 IP</th><th>规则</th><th>级别</th></tr></thead><tbody>${alerts}</tbody></table>
+    <div style="font-size:12px;color:var(--fg2);margin:12px 0 6px">历史研判（${d.analysis_count}）</div>
+    ${analyses}`;
+}
+
+async function closeIncident(id) {
+  const note = prompt("关闭原因（会写入 status_note）：", "已确认误报");
+  if (note === null) return;
+  await fetch(`/api/siem/incidents/${encodeURIComponent(id)}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "closed", note }),
+  });
+  await refreshSiem();
+}
+
+$("#btnSiem").onclick = openSiem;
 
 /* 交互 */
 $("#input").addEventListener("input", (e) => {

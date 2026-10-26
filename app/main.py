@@ -13,7 +13,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import chat, evals, kb, siem, traffic
+from app.deps import get_siem_store
 from app.kb import get_kb_manager
+from app.siem.tailer import watch
 from app.settings import get_settings
 
 logging.basicConfig(
@@ -43,8 +45,15 @@ async def lifespan(app: FastAPI):
                 logger.warning("预热 %s 失败：%s", n, exc)
 
     task = asyncio.create_task(preload())
+    tail_task = None
+    if s.siem_tail_paths:
+        tail_task = asyncio.create_task(
+            watch(s.siem_tail_paths, get_siem_store(), s.siem_tail_interval)
+        )
     yield
     task.cancel()
+    if tail_task:
+        tail_task.cancel()
 
 
 app = FastAPI(

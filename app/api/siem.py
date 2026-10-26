@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 import logging
 import uuid
 from typing import Any
@@ -12,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.deps import get_rag_agent, get_siem_store
+from app.deps import get_eve_tailer, get_rag_agent, get_siem_store
 from app.settings import get_settings
 from app.siem.parsers import parse_batch
 
@@ -22,6 +23,11 @@ router = APIRouter(prefix="/api/siem", tags=["siem"])
 
 def sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+class TailRequest(BaseModel):
+    path: str = Field(..., description="eve.json 路径（必须在 data 目录下）")
+    reset: bool = False
 
 
 class StatusUpdate(BaseModel):
@@ -46,6 +52,27 @@ async def ingest(request: Request):
         raise HTTPException(400, "没有解析出任何告警（检查字段格式）")
     result = get_siem_store().ingest(alerts)
     return {**result, "stats": get_siem_store().stats()}
+
+
+@router.post("/tail")
+async def tail(req: TailRequest):
+    """消费一次 eve.json 的新增内容（靠 offset 游标，可重复调用）。"""
+    path = (get_settings().data_dir / req.path).resolve() if not req.path.startswith("/")         else Path(req.path).resolve()
+    data_root = get_settings().data_dir.resolve()
+    if data_root not in path.parents and path != data_root:
+        raise HTTPException(403, "只允许消费 data 目录下的文件")
+    tailer = get_eve_tailer()
+    if req.reset:
+        tailer.reset(path)
+    result = tailer.poll(path)
+    if result.get("error"):
+        raise HTTPException(404, result["error"])
+    return result
+
+
+@router.get("/cursors")
+async def cursors():
+    return {"cursors": get_eve_tailer().cursors()}
 
 
 @router.get("/stats")

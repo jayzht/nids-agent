@@ -64,6 +64,7 @@ uvicorn app.main:app --port 8000     # http://127.0.0.1:8000
 | 检索质量（NIDS 领域） | recall@6 **1.00** / MRR 0.837 / nDCG@6 0.878 | 22 题 golden set（含 6 题 ATT&CK） |
 | 单次问答 | 16~40 秒（CPU 跑 qwen3:8b） | 4 次 LLM 调用；领域库 + `sources` 过滤更快 |
 | 流量取证 | 16~39 秒/份 pcap | 规则引擎 <1s，其余是 LLM；确定性结论没 LLM 也能出 |
+| 真实样本（30 份） | 行为 9/30，签名补足 16，**合计 25/30（83%）** | 误报对照 0/1 |
 | 真实恶意流量 | 12 份，**5 份产生告警（42%）**，误报对照 0 触发 | 见 `docs/REAL_TRAFFIC_BENCHMARK.md` |
 | 提示注入 | 检测 + 隔离 + 消毒 + 输出校验 | 对抗样本验证：模型没有照做，反而把注入当攻击上报 |
 | 多 Agent 融合 | 行为 + Suricata(52,752 条 ET 规则) 并行 | dnscat2 的 4,837 条告警 → 1 条结论 |
@@ -252,22 +253,27 @@ curl -N -X POST localhost:8000/api/traffic/analyze \
 
 ### 在真实恶意流量上验证（不是自己造的数据）
 
-自己造的样本只能证明代码能跑。所以从公开仓库拉了 12 份真实恶意流量 + 1 份正常 RDP 做误报对照：
+自己造的样本只能证明代码跑得通。所以从公开仓库拉了 **30 份真实恶意流量 + 1 份正常 RDP** 做误报对照：
 
 ```bash
-python scripts/fetch_real_pcaps.py          # SpiderLabs/IOCs-IDPS，约 15MB，不入 git
-python scripts/benchmark_real.py --write-doc
+python scripts/fetch_real_pcaps.py          # SpiderLabs/IOCs-IDPS，约 19MB，不入 git
+python scripts/benchmark_real.py --with-signature --write-doc   # 结果写入 docs/
 ```
 
-| 样本 | 结果 |
+| 指标 | 数值 |
 |---|---|
-| dnscat2 / ps-empire / blacknet / bot_scanner / mirai | ✅ 检出（DNS 隧道、beacon、爆破重试） |
-| njrat / lokibot / emotet / hancitor / predator / bluekeep / printnightmare | ❌ 漏检 |
-| normal_rdp（误报对照） | ✅ 未触发 |
+| 恶意样本 | 30 份（APT41、Mirai、Emotet、Locky、Petya、PrintNightmare、Heartbleed…） |
+| **合计检出** | **25/30（83%）** |
+| 行为引擎单独 | 9/30 |
+| 签名引擎补足 | +16 |
+| 误报对照 | 0/1 触发 |
 
-**5/12 的检出率不好看，但它是真的**。漏掉的分两类：漏洞利用（只有几个包，没有行为模式）、
-加密外联（行为上就像正常访问）。这两类本来就该由签名检测和威胁情报负责——
-所以下一步不是继续堆规则，而是接 SIEM。
+这个数字是这套多 Agent 架构最直接的证据：**单靠行为规则只能抓 30%，加上 Suricata 签名后到 83%**。
+
+漏掉的 5 份是单包漏洞利用（BlueKeep、PrintNightmare 扫描/SMBv1、WebLogic 反序列化、Drupalgeddon2）——
+只有几个包、没有可统计的行为模式，ET Open 也没有覆盖，属于签名与行为共同的能力边界。
+
+完整明细与归因：`docs/REAL_TRAFFIC_BENCHMARK.md`。
 
 ### 提示注入防护（这是现有项目都没做的）
 

@@ -9,6 +9,7 @@ from app.api import siem as siem_module
 from app.main import app
 from app.siem.parsers import parse_alert
 from app.siem.store import AlertStore
+from app.siem.tailer import EveTailer
 
 
 @pytest.fixture(scope="module")
@@ -21,6 +22,7 @@ def client():
 def store(tmp_path, monkeypatch):
     s = AlertStore(tmp_path / "api.db")
     monkeypatch.setattr(siem_module, "get_siem_store", lambda: s)
+    monkeypatch.setattr(siem_module, "get_eve_tailer", lambda: EveTailer(s))
     return s
 
 
@@ -170,3 +172,30 @@ def test_siem_analyze_writes_back(client, store, monkeypatch):
     assert d["analysis_count"] == 1
     assert d["analyses"][0]["verdict"] == "answered"
     assert "疑似 SSH 扫描" in d["analyses"][0]["report"]
+
+
+def test_siem_tail_endpoint(client, store, tmp_path):
+    from app.settings import get_settings
+
+    f = get_settings().data_dir / "_test_eve.jsonl"
+    f.write_text('{"event_type":"alert","src_ip":"7.7.7.7",'
+                 '"alert":{"signature":"tail-test","severity":1}}\n', encoding="utf-8")
+    try:
+        r = client.post("/api/siem/tail", json={"path": "_test_eve.jsonl"})
+        assert r.status_code == 200 and r.json()["new_alerts"] == 1
+        r2 = client.post("/api/siem/tail", json={"path": "_test_eve.jsonl"})
+        assert r2.json()["new_alerts"] == 0        # 游标生效，不重复
+        assert client.get("/api/siem/cursors").json()["cursors"]
+        assert client.get("/api/siem/alerts").json()["alerts"][0]["src_ip"] == "7.7.7.7"
+    finally:
+        f.unlink(missing_ok=True)
+
+
+def test_siem_tail_rejects_outside_data(client, store):
+    r = client.post("/api/siem/tail", json={"path": "/etc/passwd"})
+    assert r.status_code == 403
+
+
+def test_siem_tail_missing_file(client, store):
+    r = client.post("/api/siem/tail", json={"path": "_nope.jsonl"})
+    assert r.status_code == 404

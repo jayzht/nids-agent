@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.6.0 — 增量消费 + SIEM 面板 + 真实样本扩到 30 份
+
+- **eve.json 增量消费**：SQLite 游标表（path/inode/offset/lines），支持重启续读、
+  半行等待、日志轮转自动重置；`POST /api/siem/tail`、`GET /api/siem/cursors`、
+  `scripts/tail_eve.py --follow`，配置 `SIEM_TAIL_PATHS` 后随服务自动轮询。
+- **前端 SIEM 面板**：告警统计、incident 列表、详情（告警明细 + 历史研判）、
+  一键研判（SSE 流式）、关闭并写备注。
+- **真实样本 13 → 31 份**（30 恶意 + 1 对照），基准支持 `--with-signature`：
+  行为 9/30、签名补足 16、合计 **25/30（83%）**，误报 0/1。
+- 基准结果缓存（`--from-cache`），避免每次重跑 6 分钟。
+- 测试 103 → 116。
+
 ## v1.5.0 — SIEM 持久化 + 研判回写闭环
 
 - 存储层从内存 ring buffer 换成 **SQLite（WAL）**：`alerts` / `incidents` / `analyses` 三张表。

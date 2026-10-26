@@ -78,6 +78,14 @@ CREATE TABLE IF NOT EXISTS analyses (
   FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_analyses_incident ON analyses(incident_id);
+
+CREATE TABLE IF NOT EXISTS cursors (
+  path TEXT PRIMARY KEY,
+  inode INTEGER NOT NULL,
+  offset INTEGER NOT NULL,
+  lines INTEGER NOT NULL DEFAULT 0,
+  updated_at REAL NOT NULL
+);
 """
 
 

@@ -1,23 +1,24 @@
+# ---- Python ----
 .venv/
 __pycache__/
 *.pyc
-.env
 .pytest_cache/
 .ruff_cache/
+.env
 
-# 语料与索引体积大，不进 git；用 scripts/fetch_corpus.py 复现
+# ---- 生成数据（体积大，可用脚本复现，不进 git）----
+# 注意：.gitignore 不支持行尾注释，注释必须单独一行
 data/raw/
 data/index/
 data/.cache/
 data/feedback.jsonl
-
-# 临时文件
-tmp/
-
-# 流量样本：真实恶意流量不随仓库分发（授权 + 体积），按需下载
 data/pcaps/
 data/alerts/
+data/suricata/
 data/*.db
 data/*.db-wal
 data/*.db-shm
-data/suricata/
+data/benchmark_last.json
+
+# ---- 临时文件 ----
+tmp/
