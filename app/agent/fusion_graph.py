@@ -40,9 +40,20 @@ from app.traffic.tools import TrafficService
 
 logger = logging.getLogger(__name__)
 
-_PKT_RE = re.compile(r"#(\d+)")
+# 小模型不一定严格按格式写，所以这里容忍几种常见写法
+_PKT_RE = re.compile(r"#\s*(\d+)|(?:包号|pkt|packet)\s*[:：#]?\s*(\d+)", re.I)
 _DOC_RE = re.compile(r"\[K(\d+)\]")
-_SIG_RE = re.compile(r"\[sig:(\d+)\]")
+_SIG_RE = re.compile(
+    r"\[sig:\s*(\d+)\]|\bSID\s*[:：]?\s*(\d+)|(?<!\d)(2\d{6})\s*:", re.I
+)
+
+
+def _pkt_numbers(text: str) -> list[int]:
+    return sorted({int(a or b) for a, b in _PKT_RE.findall(text or "")})
+
+
+def _sig_numbers(text: str) -> list[int]:
+    return sorted({int(g) for m in _SIG_RE.findall(text or "") for g in m if g})
 
 REPORT_SYSTEM = """你是多 Agent 网络取证系统的裁决者。两个检测 Agent 已经给出各自的结果：
 
@@ -63,6 +74,7 @@ REPORT_SYSTEM = """你是多 Agent 网络取证系统的裁决者。两个检测
 - 每条结论标注来源：`[行为]`、`[签名]` 或 `[双源]`；
 - 包号用 `[pkt #12]`；签名用 `[sig:2100719]`；文档用 `[K1]`；
 - 三者都必须真实存在于给定内容中，禁止编造；
+- **不要复述这段格式说明**，直接从 `## 结论` 开始写正文；
 - **只要引用了签名检测结果，就必须写成 `[sig:数字]` 的方括号格式**，不要只写裸 SID；
 - 输出结构：## 结论 / ## 双源印证 / ## 单源线索 / ## 攻击链时序 / ## ATT&CK 覆盖 / ## 建议处置 / ## 参考文档；
 - 「ATT&CK 覆盖」一节必须列出给定列表里的技术编号（如 T1046），按战术顺序排列，
@@ -107,6 +119,7 @@ class FusionState(TypedDict, total=False):
     attempts: int
     verdict: str
     warnings: list[str]
+    quality: list[str]
     steps: Annotated[list[Step], operator.add]
 
 
@@ -299,9 +312,13 @@ class FusionAgent:
 
         question = state.get("question") or "请裁决这份流量的性质，并给出处置建议。"
         if state.get("attempts", 0) > 0:
+            allowed = ", ".join(
+                t["id"] for t in (state.get("attack") or {}).get("techniques", [])
+            ) or "（无）"
             question += (
-                f"\n\n【重要】上一版证据标注有问题：包号必须在 1..{state.get('max_pkt', 0)} 之间，"
-                f"只能引用融合结果里真实出现的 [sig:ID]。"
+                f"\n\n【重要】上一版有问题：包号必须在 1..{state.get('max_pkt', 0)} 之间；"
+                f"签名只能用 [sig:ID] 且 ID 必须真实存在；"
+                f"ATT&CK 编号只能从这些里选：{allowed}，一个都不能多写，写不出就不写这一节。"
             )
 
         report = await ainvoke_text([
@@ -329,9 +346,9 @@ class FusionAgent:
 
     async def node_verify(self, state: FusionState) -> dict[str, Any]:
         report = state.get("report") or ""
-        pkts = sorted({int(x) for x in _PKT_RE.findall(report)})
+        pkts = _pkt_numbers(report)
         docs = sorted({int(x) for x in _DOC_RE.findall(report)})
-        sigs = sorted({int(x) for x in _SIG_RE.findall(report)})
+        sigs = _sig_numbers(report)
         valid_sigs = {int(s) for f in (state.get("fused") or []) for s in f["signature_ids"]}
         max_pkt = int(state.get("max_pkt") or 0)
         has_findings = bool(state.get("fused"))
@@ -350,17 +367,23 @@ class FusionAgent:
             warnings.append(f"引用了未映射的 ATT&CK 技术 {bad_tech[:5]}")
 
         needs_sig = any("signature" in f["agents"] for f in (state.get("fused") or []))
+        quality: list[str] = []
+        if pkts and not docs:
+            quality.append("报告未引用知识库文档（只有包号/签名证据）")
+        if needs_sig and not sigs:
+            quality.append("报告未按 [sig:ID] 格式标注签名")
         if not has_findings:
             verdict = "benign"
         elif warnings:
             verdict = "unsafe"
-        elif pkts and docs and (sigs or not needs_sig):
+        elif pkts and (sigs or docs):
             verdict = "answered"
         else:
             verdict = "ungrounded"
         return {
             "verdict": verdict,
             "warnings": warnings,
+            "quality": quality,
             "steps": [{
                 "agent": "fusion",
                 "node": "verify",
@@ -385,8 +408,7 @@ class FusionAgent:
             "steps": [{
                 "agent": "fusion",
                 "node": "finalize",
-                "title": f"输出：{len(citations)} 条文档引用 / "
-                         f"{len({int(x) for x in _SIG_RE.findall(report)})} 个签名 SID",
+                "title": f"输出：{len(citations)} 条文档引用 / {len(_sig_numbers(report))} 个签名 SID",
                 "detail": {},
             }],
         }
@@ -425,6 +447,7 @@ class FusionAgent:
             "answer": values.get("report", ""),
             "citations": values.get("citations", []),
             "warnings": values.get("warnings", []),
+            "quality": values.get("quality", []),
             "attack": values.get("attack", {}),
             "session_id": session_id,
             "message_id": uuid.uuid4().hex[:12],
