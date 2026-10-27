@@ -34,7 +34,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.agent import prompts
 from app.agent.state import RAGState
-from app.core.llm import ainvoke_text, get_chat_model, with_no_think
+from app.core.llm import ainvoke_text, with_no_think
 from app.core.text import truncate
 from app.kb import KBManager
 from app.retrieval.service import Retriever
