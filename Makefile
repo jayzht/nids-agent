@@ -1,4 +1,4 @@
-.PHONY: help setup fetch fetch-domain samples real benchmark alerts suricata index run test eval sweep clean
+.PHONY: help setup fetch fetch-domain samples real benchmark alerts suricata index run test eval sweep docker clean
 
 PY := .venv/bin/python
 
@@ -15,9 +15,10 @@ help:
 	@echo "make run     启动 FastAPI 服务 http://127.0.0.1:8000"
 	@echo "make test    跑单元测试"
 	@echo "make eval    跑检索评测"
+	@echo "make docker  构建并启动容器（docker compose up -d --build）"
 
 setup:
-	python3 -m venv .venv && $(PY) -m pip install -U pip && $(PY) -m pip install -r requirements.txt
+	python3 -m venv .venv && $(PY) -m pip install -U pip && $(PY) -m pip install -r requirements-dev.txt
 	@echo "\n下一步: make fetch && make index && make run"
 
 fetch:
@@ -55,6 +56,9 @@ eval:
 
 sweep:
 	$(PY) scripts/sweep.py
+
+docker:
+	docker compose up -d --build
 
 clean:
 	rm -rf data/index data/.cache .pytest_cache

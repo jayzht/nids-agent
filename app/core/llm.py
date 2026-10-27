@@ -181,3 +181,22 @@ def parse_json(text: str) -> Any:
             except json.JSONDecodeError:
                 pass
     return None
+
+
+async def ainvoke_text(messages, model: str | None = None) -> str:
+    """调用 LLM 并返回文本。
+
+    有些 OpenAI 兼容网关会忽略 `stream: true` 直接返回完整 JSON
+    （例如轻量代理/自研网关），LangChain 的流式解析器会抛
+    `ValueError: No generations found in stream`。
+    这种情况自动回退到非流式，保证接口可用——只是前端拿不到逐字输出。
+    """
+    llm = get_chat_model(model=model, streaming=True)
+    try:
+        resp = await llm.ainvoke(messages)
+    except ValueError as exc:
+        if "No generations found in stream" not in str(exc):
+            raise
+        logger.warning("后端返回了非流式响应，回退到非流式调用")
+        resp = await get_chat_model(model=model, streaming=False).ainvoke(messages)
+    return resp.content if isinstance(resp.content, str) else str(resp.content)

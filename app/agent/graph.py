@@ -34,7 +34,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.agent import prompts
 from app.agent.state import RAGState
-from app.core.llm import get_chat_model, with_no_think
+from app.core.llm import ainvoke_text, get_chat_model, with_no_think
 from app.core.text import truncate
 from app.kb import KBManager
 from app.retrieval.service import Retriever
@@ -160,13 +160,12 @@ class RAGAgent:
         return data if isinstance(data, dict) else {}
 
     async def node_chat(self, state: RAGState) -> dict[str, Any]:
-        llm = get_chat_model()
-        resp = await llm.ainvoke(
+        answer = await ainvoke_text(
             [("system", with_no_think("你是一个友好的技术助手，简短回答。")),
              ("human", state["question"])]
         )
         return {
-            "answer": resp.content if isinstance(resp.content, str) else str(resp.content),
+            "answer": answer,
             "verdict": "answered",
             "citations": [],
             "steps": [{"node": "chat", "title": "闲聊直答（未检索）", "detail": {}}],
@@ -348,11 +347,9 @@ class RAGAgent:
                 "[1]、[2] 这样的编号，否则视为无效答案。"
             )
 
-        llm = get_chat_model()
-        resp = await llm.ainvoke(
+        answer = await ainvoke_text(
             [("system", with_no_think(prompts.GENERATE_SYSTEM)), ("human", user)]
         )
-        answer = resp.content if isinstance(resp.content, str) else str(resp.content)
         return {
             "answer": answer,
             "context": context,

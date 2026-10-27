@@ -7,16 +7,17 @@ services:
     volumes: ["./data/qdrant:/qdrant/storage"]
 
   api:
+    image: devrag:local
     build: .
-    ports: ["8000:8000"]
+    ports: ["${API_PORT:-8000}:8000"]
     environment:
-      LLM_BASE_URL: http://host.docker.internal:11434/v1
-      LLM_API_KEY: ollama
-      LLM_MODEL: qwen3:8b
-      EMBEDDING_BASE_URL: http://host.docker.internal:11434/v1
-      EMBEDDING_API_KEY: ollama
-      EMBEDDING_MODEL: bge-m3
-      VECTOR_BACKEND: qdrant
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-http://host.docker.internal:11434/v1}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-ollama}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
+      VECTOR_BACKEND: ${VECTOR_BACKEND:-qdrant}
       QDRANT_URL: http://qdrant:6333
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes: ["./data:/app/data"]

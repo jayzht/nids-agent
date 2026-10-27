@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     fusion: str = "normalized"     # rrf | normalized
     rrf_k: int = 60                # RRF 平滑常数
     rerank_mode: str = "none"      # none | lexical | llm
+    # ATT&CK 映射模式：keyword（静态+关键词，默认）| semantic（加知识库语义兜底）
+    attack_mapping_mode: str = "keyword"
     rerank_top_n: int = 12
 
     # ---------- 分块 ----------

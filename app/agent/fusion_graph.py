@@ -28,7 +28,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agent.state import Step
-from app.core.llm import get_chat_model, with_no_think
+from app.core.llm import ainvoke_text, with_no_think
 from app.core.text import truncate
 from app.retrieval.service import Retriever
 from app.settings import BASE_DIR, Settings
@@ -204,7 +204,8 @@ class FusionAgent:
     async def node_attack(self, state: FusionState) -> dict[str, Any]:
         """把融合结果映射到 ATT&CK：行为走静态表，签名走关键词 + 知识库语义兜底。"""
         t0 = time.time()
-        mapper = AttackMapper(self.retriever)
+        use_semantic = self.settings.attack_mapping_mode == "semantic"
+        mapper = AttackMapper(self.retriever if use_semantic else None)
         findings = await mapper.enrich(list(state.get("fused") or []))
         coverage = summarize(findings)
         return {
@@ -214,7 +215,7 @@ class FusionAgent:
                 "agent": "attack",
                 "node": "attack",
                 "title": f"ATT&CK 映射：{coverage['total']} 个技术 / {len(coverage['tactics'])} 个战术",
-                "detail": {"techniques": [
+                "detail": {"mode": self.settings.attack_mapping_mode, "techniques": [
                     f"{t['id']} {t['name']} ({t['confidence']})" for t in coverage["techniques"]
                 ], "ms": round((time.time() - t0) * 1000)},
             }],
@@ -303,8 +304,7 @@ class FusionAgent:
                 f"只能引用融合结果里真实出现的 [sig:ID]。"
             )
 
-        llm = get_chat_model()
-        resp = await llm.ainvoke([
+        report = await ainvoke_text([
             ("system", with_no_think(REPORT_SYSTEM)),
             ("human", REPORT_USER.format(
                 question=question,
@@ -315,7 +315,6 @@ class FusionAgent:
                 knowledge=k_block,
             )),
         ])
-        report = resp.content if isinstance(resp.content, str) else str(resp.content)
         return {
             "report": report,
             "attempts": state.get("attempts", 0) + 1,

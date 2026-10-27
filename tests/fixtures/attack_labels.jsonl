@@ -1,0 +1,29 @@
+{"sid": 2039894, "signature": "ET DYN_DNS DYNAMIC_DNS Query to a *.chickenkiller .com Domain", "gold": "T1071.004", "note": "DNS C2 通道"}
+{"sid": 2101251, "signature": "GPL TELNET Bad Login", "gold": "T1110", "note": "登录爆破"}
+{"sid": 2100719, "signature": "GPL TELNET root login", "gold": "T1110", "note": "root 登录尝试"}
+{"sid": 2008120, "signature": "ET TFTP Outbound TFTP Read Request", "gold": "T1105", "note": "通过 TFTP 拉取工具"}
+{"sid": 2064198, "signature": "ET INFO BusyBox Banner Observed", "gold": "none", "note": "信息类，不构成技术"}
+{"sid": 2021641, "signature": "ET MALWARE LokiBot User-Agent (Charon/Inferno)", "gold": "T1071.001", "note": "HTTP C2 UA"}
+{"sid": 2025381, "signature": "ET MALWARE LokiBot Checkin", "gold": "T1071.001", "note": "HTTP 心跳"}
+{"sid": 2024313, "signature": "ET MALWARE LokiBot Request for C2 Commands Detected M1", "gold": "T1071.001", "note": "拉取指令"}
+{"sid": 2025483, "signature": "ET MALWARE LokiBot Fake 404 Response", "gold": "T1071.001", "note": "C2 伪装 404"}
+{"sid": 2024312, "signature": "ET MALWARE LokiBot Application/Credential Data Exfiltration Detected M1", "gold": "T1048", "note": "数据外传（不是凭据转储）"}
+{"sid": 2023016, "signature": "ET HUNTING SUSPICIOUS Path to BusyBox", "gold": "T1105", "note": "下载 busybox"}
+{"sid": 2025709, "signature": "ET INFO SMB2 NT Create AndX Request For a DLL File - Possible Lateral Movement", "gold": "T1021.002", "note": "SMB 横向移动"}
+{"sid": 2027973, "signature": "ET EXPLOIT HiSilicon DVR - Default Telnet Root Password Inbound", "gold": "T1110", "note": "默认口令尝试"}
+{"sid": 2067085, "signature": "ET INFO NTLM Session Setup Request - Negotiate", "gold": "none", "note": "信息类"}
+{"sid": 2067086, "signature": "ET INFO NTLMv1 Session Setup Response - Challenge", "gold": "none", "note": "信息类"}
+{"sid": 2067087, "signature": "ET INFO NTLM Session Setup Request - Auth", "gold": "none", "note": "信息类"}
+{"sid": 2023901, "signature": "ET TELNET busybox MEMES Hackers - Possible Brute Force Attack", "gold": "T1110", "note": "爆破"}
+{"sid": 2023019, "signature": "ET TELNET busybox MIRAI hackers - Possible Brute Force Attack", "gold": "T1110", "note": "爆破"}
+{"sid": 2023304, "signature": "ET TELNET busybox ECCHI hackers - Possible Brute Force Attack", "gold": "T1110", "note": "爆破"}
+{"sid": 2043238, "signature": "ET DYN_DNS External IP Lookup Domain in DNS Query (checkip .dyndns .org)", "gold": "none", "note": "合法 IP 查询"}
+{"sid": 2021378, "signature": "ET INFO External IP Lookup - checkip.dyndns.org", "gold": "none", "note": "合法 IP 查询"}
+{"sid": 2022896, "signature": "ET HUNTING SUSPICIOUS Firesale gTLD EXE DL with no Referer June 13 2016", "gold": "T1105", "note": "EXE 下载"}
+{"sid": 2019714, "signature": "ET MALWARE Terse alphanumeric executable downloader high likelihood of being hostile", "gold": "T1105", "note": "下载器"}
+{"sid": 2018959, "signature": "ET INFO PE EXE or DLL Windows file download HTTP", "gold": "T1105", "note": "文件下载"}
+{"sid": 2025649, "signature": "ET EXPLOIT Possible ETERNALBLUE Probe MS17-010 (MSF style)", "gold": "T1210", "note": "SMB 远程利用"}
+{"sid": 2025992, "signature": "ET EXPLOIT Possible ETERNALBLUE Probe MS17-010 (Generic Flags)", "gold": "T1210", "note": "SMB 远程利用"}
+{"sid": 2018377, "signature": "ET EXPLOIT Possible OpenSSL HeartBleed Large HeartBeat Response (Client Init Vuln Server)", "gold": "T1190", "note": "面向公网应用利用"}
+{"sid": 2033254, "signature": "ET INFO [MS-PAR] Windows Printer Spooler Activity - RpcAsyncEnumPrinterDrivers", "gold": "T1210", "note": "PrintNightmare 前置探测"}
+{"sid": 2033255, "signature": "ET INFO [MS-PAR] Windows Printer Spooler Activity - RpcAsyncAddPrinterDriver", "gold": "T1210", "note": "PrintNightmare 利用"}

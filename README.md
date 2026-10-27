@@ -3,7 +3,7 @@
 > 一个**完整可跑**的 RAG 项目：拿开源框架的官方文档做知识库，用 LangGraph 搭 Agent 工作流，FastAPI 提供 SSE 流式接口，本地 Ollama 推理，**零 API 费用**。
 
 ```bash
-git clone 本项目 && pip install -r requirements.txt
+git clone 本项目 && pip install -r requirements-dev.txt
 ollama pull qwen3:8b && ollama pull bge-m3
 python scripts/fetch_corpus.py && python scripts/build_index.py
 uvicorn app.main:app --port 8000     # http://127.0.0.1:8000
@@ -62,7 +62,7 @@ uvicorn app.main:app --port 8000     # http://127.0.0.1:8000
 | 索引构建 | 约 53 秒（CPU，8 核并行向量化） | bge-m3，1024 维 |
 | 检索质量（技术文档） | recall@6 **0.893** / MRR 0.757 / nDCG@6 0.791 | 28 题 golden set |
 | 检索质量（NIDS 领域） | recall@6 **1.00** / MRR 0.837 / nDCG@6 0.878 | 22 题 golden set（含 6 题 ATT&CK） |
-| 单次问答 | 16~40 秒（CPU 跑 qwen3:8b） | 4 次 LLM 调用；领域库 + `sources` 过滤更快 |
+| 单次问答 | **2.2 秒**（vLLM 3B）/ 16~40 秒（CPU Ollama） | 4 次 LLM 调用；换后端只改环境变量 |
 | 流量取证 | 16~39 秒/份 pcap | 规则引擎 <1s，其余是 LLM；确定性结论没 LLM 也能出 |
 | 真实样本（30 份） | 行为 9/30，签名补足 16，**合计 25/30（83%）** | 误报对照 0/1 |
 | 真实恶意流量 | 12 份，**5 份产生告警（42%）**，误报对照 0 触发 | 见 `docs/REAL_TRAFFIC_BENCHMARK.md` |
@@ -288,6 +288,18 @@ python scripts/benchmark_real.py --with-signature --write-doc   # 结果写入 d
 第三层是复用现有能力：`retriever.search(..., prefixes=["mitre/techniques"])`，
 不需要再维护几百条关键词规则。低置信度会明确标注，避免「猜出来的技术」被当成结论。
 
+**但这层兜底实测下来不成立**，我把它做成了默认关闭的实验开关：
+
+| 方案 | 覆盖率 | 7 条未命中里救回 |
+|---|---:|---:|
+| 静态 + 关键词（默认） | 51.7% | — |
+| + ATT&CK 知识库语义检索 | 75.9% | **0 / 7** |
+| + LLM 受限分类（Qwen2.5-3B） | 85.7% | 2 / 7 |
+
+原因很朴素：**签名讲的是「哪个家族/什么规则」，技术文档讲的是「攻击者干了什么」**，
+两边的词表对不上。完整标注集、错误分析和结论在 [`docs/ATTACK_MAPPING_EVAL.md`](docs/ATTACK_MAPPING_EVAL.md)。
+默认模式是 `ATTACK_MAPPING_MODE=keyword`，想要实验就改成 `semantic`。
+
 实测（Mirai 样本，多 Agent 研判）：
 
 ```
@@ -408,7 +420,7 @@ ollama pull bge-m3          # 多语言向量，中文问英文文档必须用�
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 cp .env.example .env          # 默认就连本地 Ollama，不用改
 ```
 
@@ -433,6 +445,30 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 或者 `make run` / `make test` / `make eval` / `make sweep`。
+
+### Docker 一键启动（已验证）
+
+```bash
+# 默认连宿主机 Ollama
+docker compose up -d --build
+
+# 如果宿主机上跑的是 vLLM（OpenAI 兼容），直接换后端
+LLM_BASE_URL=http://host.docker.internal:8011/v1 \
+LLM_MODEL=Qwen/Qwen2.5-3B-Instruct \
+VECTOR_BACKEND=numpy \
+docker compose up -d --build
+```
+
+实测：镜像内 `/healthz` 正常、4 个知识库（23,796 片段）全部加载、文档问答命中 T1003.001。
+
+两个约束要提前知道：
+
+| 约束 | 原因 | 怎么办 |
+|---|---|---|
+| 容器内**没有** Suricata | 签名 Agent 要调宿主 docker | 多 Agent 模式在宿主机跑；或自行挂载 `/var/run/docker.sock` |
+| 默认 `VECTOR_BACKEND=qdrant` | compose 里带了 qdrant 服务 | 不想拉镜像就设 `VECTOR_BACKEND=numpy` |
+
+镜像通过 `.dockerignore` 把构建上下文从 500MB 压到 **1.9MB**（`.venv` 和 `data/` 不参与构建）。
 
 ### 4. 换后端（可选）
 

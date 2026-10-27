@@ -1,0 +1,17 @@
+# ===== 开发 / 语料采集 / 测试（镜像里不需要）=====
+-r requirements.txt
+
+# 语料采集：RST / HTML 转换
+beautifulsoup4>=4.12
+html2text>=2024.2
+
+# 生成样本流量
+scapy>=2.5
+
+# 测试
+pytest>=8.0
+pytest-asyncio>=0.23
+ruff>=0.5
+
+# 可选：Qdrant 向量库后端（默认用内置 numpy 后端）
+# qdrant-client>=1.9

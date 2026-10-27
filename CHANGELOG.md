@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.8.0 — 映射评测 + 前端契约测试 + 容器验证
+
+- **ATT&CK 映射评测**：29 条真实签名的标注集 + 三种方案对比（关键词 60.3%、
+  语义兜底 0/7、LLM 受限分类 2/7）→ 默认改为 `keyword`，负结果留在
+  `docs/ATTACK_MAPPING_EVAL.md`。
+- **前端契约测试**：从 `index.html` 抽 fetch 目标与 FastAPI 路由比对、元素 ID 引用、
+  按钮绑定、node 语法检查，共 7 个用例。
+- **容器**：补 `.dockerignore`（构建上下文 500MB → 1.9MB），基础镜像改用 `python:3.12-slim`，
+  镜像内安装 tshark；`docker compose up` 实测通过（4 个 KB 全加载、文档问答命中 T1003.001）；
+  compose 的 LLM/Embedding/向量后端均可通过环境变量覆盖。
+- **流式兼容**：部分 OpenAI 兼容网关忽略 `stream: true`，LangChain 会抛
+  `No generations found in stream`；新增 `ainvoke_text()` 自动回退非流式。
+- 依赖拆分：`requirements.txt`（运行时）/ `requirements-dev.txt`（采集 + 测试），镜像不需要 scapy/bs4。
+- 实测 vLLM（Qwen2.5-3B）后端单次问答 **2.2s**。
+- 测试 131 → 138。
+
 ## v1.7.0 — ATT&CK 自动映射
 
 - `app/signature/attack.py`：三层映射（行为静态表 / 签名关键词 / ATT&CK 知识库语义兜底），
