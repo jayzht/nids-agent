@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.1
     llm_timeout: float = 180.0
     # 便宜的小模型可以单独指定，用于打分/改写等高频调用
+    # 快模型可以指向另一个服务（例如本地 GPU 跑结构化任务，云端只做最终生成）
+    llm_fast_base_url: str = ""
+    llm_fast_api_key: str = ""
     llm_fast_model: str = ""
 
     # ---------- Embedding ----------

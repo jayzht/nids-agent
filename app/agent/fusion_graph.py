@@ -362,12 +362,14 @@ class FusionAgent:
             warnings.append(f"引用了不存在的签名 {bad_sigs[:5]}")
 
         mapped_tech = {t["id"] for t in (state.get("attack") or {}).get("techniques", [])}
-        bad_tech = [t for t in technique_ids(report) if t not in mapped_tech]
-        if bad_tech:
-            warnings.append(f"引用了未映射的 ATT&CK 技术 {bad_tech[:5]}")
+        # ATT&CK 映射表是白名单式的，但模型可能引用表外的真实技术（如 T1595.001），
+        # 这类只做质量提示，不当作「编造证据」判死整份报告。
+        unmapped_tech = [t for t in technique_ids(report) if t not in mapped_tech]
 
         needs_sig = any("signature" in f["agents"] for f in (state.get("fused") or []))
         quality: list[str] = []
+        if unmapped_tech:
+            quality.append(f"引用了映射表外的 ATT&CK 技术 {unmapped_tech[:5]}（未经校验）")
         if pkts and not docs:
             quality.append("报告未引用知识库文档（只有包号/签名证据）")
         if needs_sig and not sigs:

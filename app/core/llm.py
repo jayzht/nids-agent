@@ -54,8 +54,25 @@ def get_chat_model(
 
 @lru_cache
 def get_fast_chat_model(json_mode: bool = False) -> ChatOpenAI:
+    """结构化任务（路由/改写/打分）用的模型。
+
+    可以单独指定 base_url/key：常见组合是「本地 GPU 14B 做 JSON 任务（0.4s/次），
+    云端大模型只做最终生成」，把 3/4 的调用留在本地。
+    """
     s = get_settings()
-    return get_chat_model(model=s.llm_fast_model or s.llm_model, temperature=0.0, json_mode=json_mode)
+    kwargs: dict[str, Any] = {}
+    if json_mode:
+        kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
+    return ChatOpenAI(
+        model=s.llm_fast_model or s.llm_model,
+        base_url=s.llm_fast_base_url or s.llm_base_url,
+        api_key=s.llm_fast_api_key or s.llm_api_key,
+        temperature=0.0,
+        timeout=s.llm_timeout,
+        streaming=False,
+        max_retries=2,
+        **kwargs,
+    )
 
 
 def with_no_think(system_prompt: str) -> str:
@@ -151,7 +168,11 @@ async def complete_json(
     prompt: str, system: str = "", model: str | None = None, fallback: Any = None
 ) -> Any:
     """调用 LLM 并尽量解析出 JSON；失败返回 fallback，保证流水线不中断。"""
-    llm = get_chat_model(model=model, temperature=0.0, streaming=False, json_mode=True)
+    llm = (
+        get_chat_model(model=model, temperature=0.0, streaming=False, json_mode=True)
+        if model
+        else get_fast_chat_model(json_mode=True)
+    )
     msgs = []
     if system:
         msgs.append(("system", with_no_think(system)))
