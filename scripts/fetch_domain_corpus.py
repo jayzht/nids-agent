@@ -98,6 +98,16 @@ GIT_SOURCES: list[GitSource] = [
         url_for=lambda rel_repo, rel_sub: f"https://github.com/SigmaHQ/sigma/blob/master/{rel_repo}.md",
     ),
     GitSource(
+        name="sigma-spec",
+        repo="https://github.com/SigmaHQ/sigma-specification.git",
+        prefix="sigma-spec",
+        subdirs=["specification", "sigmahq"],
+        suffixes=(".md",),
+        url_for=lambda rel_repo, rel_sub: (
+            f"https://github.com/SigmaHQ/sigma-specification/blob/main/{rel_repo}.md"
+        ),
+    ),
+    GitSource(
         name="ndpi",
         repo="https://github.com/ntop/nDPI.git",
         prefix="ndpi",
@@ -324,6 +334,11 @@ def scan_urls(out_root: Path) -> dict[str, str]:
             url = f"https://www.ntop.org/guides/ndpi/{Path(stem).stem}.html"
         elif top == "rfc":
             url = RFC_BASE.format(n=Path(stem).stem.replace("rfc", ""))
+        elif top == "sigma-spec":
+            url = (
+                "https://github.com/SigmaHQ/sigma-specification/blob/main/"
+                f"{stem}.md"
+            )
         elif top == "sigma":
             url = f"https://github.com/SigmaHQ/sigma/blob/master/documentation/{stem}.md"
         elif top == "mitre":
