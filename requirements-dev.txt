@@ -1,9 +1,10 @@
 # ===== 开发 / 语料采集 / 测试（镜像里不需要）=====
 -r requirements.txt
 
-# 语料采集：RST / HTML 转换
+# 语料采集：RST / HTML / PDF 转换
 beautifulsoup4>=4.12
 html2text>=2024.2
+pypdf>=4.0
 
 # 生成样本流量
 scapy>=2.5

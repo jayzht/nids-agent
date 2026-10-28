@@ -334,6 +334,12 @@ def scan_urls(out_root: Path) -> dict[str, str]:
                 if rest.startswith("tactics/"):
                     kind = "tactics"
                 url = f"https://attack.mitre.org/{kind}/{tid}/"
+        elif top == "nist":
+            url = f"https://nvlpubs.nist.gov/nistpubs/SpecialPublications/{stem}.pdf"
+        elif top == "ms-smb2":
+            url = "https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/"
+        elif top == "snort":
+            url = "https://docs.snort.org/"
         elif top == "sigma-rules":
             url = f"https://github.com/SigmaHQ/sigma/blob/master/rules/{stem}.yml"
         elif top == "papers":

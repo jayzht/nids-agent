@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.1.0 — 支持 PDF/HTML 语料（NIST / MS-SMB2 / Snort 3）
+
+- 新增 `app/ingest/pdf.py`：去页眉页脚、行重排成段落、`## Page N` 保留页码定位。
+- 新增 `scripts/fetch_pdf_docs.py` + `make pdf-docs`：
+  - NIST SP 800-61 r3 / r2（事件响应）
+  - MS-SMB2（微软 SMB 2/3 协议规范，499 页）
+  - Snort 3 官方文档（docs.snort.org 整本 print.html）
+- `scan_urls` 增加 nist / ms-smb2 / snort 前缀映射。
+- 至此语料格式覆盖：Markdown / RST / RFC 纯文本 / STIX JSON / 规则 YAML / PDF / HTML。
+
 ## v2.0.0 — 知识库扩容到业内常用语料（1,265 → 5,505 篇）
 
 先用查询实测缺口，再针对性补：

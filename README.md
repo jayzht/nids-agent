@@ -58,7 +58,7 @@ uvicorn app.main:app --port 8000     # http://127.0.0.1:8000
 
 | 指标 | 值 | 说明 |
 |---|---|---|
-| 知识库规模 | 5,820 篇文档 / 44,315 个片段 | 技术文档 3 库（316 篇）+ 领域库 `ids`（5,504 篇，含 ATT&CK 1,785 + Sigma 3,161） |
+| 知识库规模 | 5,824 篇文档 / 48,014 个片段 | 技术文档 3 库（316 篇）+ 领域库 `ids`（5,508 篇，含 ATT&CK 1,785 + Sigma 3,161） |
 | 索引构建 | 约 53 秒（CPU，8 核并行向量化） | bge-m3，1024 维 |
 | 检索质量（技术文档） | recall@6 **0.893** / MRR 0.757 / nDCG@6 0.791 | 28 题 golden set |
 | 检索质量（NIDS 领域） | recall@6 **1.00** / MRR 0.837 / nDCG@6 0.878 | 22 题 golden set（含 6 题 ATT&CK） |
@@ -90,6 +90,8 @@ uvicorn app.main:app --port 8000     # http://127.0.0.1:8000
 | **arXiv** 18 篇论文 | 入侵检测、加密流量分类、无监督异常检测、LLM 日志安全 | HTML（LaTeXML） | 方法论与数据集 |
 | **MITRE ATT&CK**（1,785 篇） | 706 技术 + 15 战术 + **842 恶意软件/工具** + 178 组织 + 44 缓解措施 | STIX 2.1 → Markdown | 蓝队事实标准：这个行为是谁干的、怎么防 |
 | **Sigma**（3,165 篇） | 3,161 条规则（含 detection 逻辑与误报）+ 规范文档 | YAML → Markdown | 检测工程事实标准，「怎么检测 X」 |
+| **MS-SMB2 / Snort 3** | SMB2/3 协议规范、Snort 3 规则与配置 | PDF / HTML → Markdown | 两大引擎的权威细节 |
+| **NIST SP 800-61** | 事件响应生命周期（准备→检测→遏制→恢复） | PDF → Markdown | 安全运营流程标准 |
 
 一句话：**NIDS 没有一份覆盖全部内容的文档**，知识散在「工具文档 / 协议规范 / 论文」三类源里，而且格式各不相同。
 这也是这个领域真正的工作量所在 —— 不是找不到数据，是数据不齐、格式不一。
@@ -109,7 +111,7 @@ python scripts/fetch_domain_corpus.py --proxy http://127.0.0.1:7890
 python scripts/build_index.py --kb ids
 ```
 
-产物：**5,504 篇文档 / 36,699 个片段**；22 题领域评测集成绩 **recall@6 1.00、MRR 0.835、nDCG@6 0.876**。
+产物：**5,508 篇文档 / 40,398 个片段**；22 题领域评测集成绩 **recall@6 1.00、MRR 0.805、nDCG@6 0.854**。
 
 扩容前先用查询实测缺口（`Snort / SMB2 / NetFlow / D3FEND / Mirai / STIX / CICIDS` 七类全落空），
 再定向补了 ATT&CK 实体、Sigma 规则和 14 篇协议 RFC。加上 2 万片段后 recall 没掉——
@@ -122,6 +124,8 @@ python scripts/build_index.py --kb ids
 | 协议事实 | 21 篇 RFC：IP/TCP/UDP/ICMP/DNS/DHCP/RADIUS/NetFlow v9/IPFIX/Kerberos/LDAP/TLS1.2+1.3/HTTP2/QUIC/DoH/Syslog |
 | 检测引擎 | Suricata 规则/输出、Zeek 脚本与日志字段、nDPI 风险 |
 | 攻击知识 | ATT&CK 706 技术 + 842 软件 + 178 组织 + 44 缓解；Sigma 3,161 条规则 |
+| 协议实现 | **MS-SMB2 规范（499 页）**、Snort 3 官方文档 |
+| 运营流程 | NIST SP 800-61 r2/r3（事件响应生命周期） |
 | 研究前沿 | 18 篇 arXiv（加密流量、异常检测、LLM 日志安全） |
 
 这四层刚好对应安全分析的四个问题：**协议长什么样 → 引擎怎么配 → 攻击叫什么 → 学界怎么看**。
@@ -464,7 +468,7 @@ VECTOR_BACKEND=numpy \
 docker compose up -d --build
 ```
 
-实测：镜像内 `/healthz` 正常、4 个知识库（44,315 片段）全部加载、文档问答命中 T1003.001。
+实测：镜像内 `/healthz` 正常、4 个知识库（48,014 片段）全部加载、文档问答命中 T1003.001。
 
 两个约束要提前知道：
 
@@ -542,6 +546,7 @@ app/
 ├── ingest/
 │   ├── loader.py        Markdown/MDX 清洗（frontmatter / JSX / style / 锚点 / 噪音文档）
 │   ├── converters.py    ★ 多格式接入：RST / RFC 纯文本 / HTML → Markdown
+│   ├── pdf.py           ★ PDF → Markdown（去页眉页脚、行重排、保留页码）
 │   ├── chunker.py       ★ 结构化分块：标题面包屑 + 代码块原子化 + 装箱重叠
 │   └── types.py         Document / Chunk
 ├── retrieval/
