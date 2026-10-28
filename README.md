@@ -906,6 +906,29 @@ query 和这一段的字面语义，会丢掉「这个片段来自多强的文�
 （同模型同维度，索引不用重建），就能在零本地进程的前提下拿到 hybrid 的召回，
 详见 [4. 云后端](#4-云后端deepseek本地只留-embedding)。
 
+### 数据集选型：为什么不是 CICIDS2017
+
+CICIDS2017 是「大家都在用」的那个，但它有公开的质量问题：
+Engelen et al. 在 [Troubleshooting an Intrusion Detection Dataset: the CICIDS2017 Case Study](https://intrusion-detection.distrinet-research.be/WTMC2021/index.html)
+（WTMC 2021）里逐项检查了**流量生成、流构造、特征提取、标注**四个环节，
+发现 **>20% 的原始流量需要重建或重新标注**；而且它按天给 pcap，每天数 GB，
+我们这种 pcap → tshark → Suricata 的链路跑不动。
+
+实际验证过的替代品（都能按「单个抓包」下载，不用整包）：
+
+| 数据集 | 规模/形态 | 标注 | 适配成本 |
+|---|---|---|---|
+| **CTU-13**（已接入） | 2GB 整包，13 场景 | binetflow 逐流 | 已完成 |
+| **CTU-Malware-Capture-Botnet-\*** | 411 个独立抓包，pcap 10~200MB | 同样是 binetflow | **零改动**，但实测**大部分抓包的 Label 列是空的**（110-1/157-1/267-1 都空，409-2 正常） |
+| **IoT-23 v2** | 23 场景，pcap ~140MB + Zeek conn 日志 | `*-zeek-conn-log.labeled`，逐流 `label` 字段 | 要写个小适配器（TSV + `#fields` 表头），约 40 行 |
+| UNSW-NB15 / NSL-KDD | 纯 flow CSV | 有 | 不适合：**没有 pcap**，我们的链路是包级的 |
+
+已试跑 Hancitor（`CTU-Malware-Capture-Botnet-409-2`，2021 年，20MB，4965 条流）：
+**recall 0.035 / FPR 0.000**——行为检测器一条都没响，只有 Suricata 的 3 条规则命中。
+合理：这是经代理的加密 HTTPS C2，既没有扫描扇出也没有洪泛量级，
+正好对上当前检测器「依赖量级/周期」的短板。想覆盖这类，得靠 TLS 指纹/JA3 和
+周期性的长连接分析，不是加一条规则能解决的。
+
 ### 带标注数据集（CTU-13）：为什么还要再测一遍
 
 上面那 30 份精选 pcap 有个致命缺口：**里面几乎没有正常背景流量**，所以只能证明
