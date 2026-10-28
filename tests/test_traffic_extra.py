@@ -168,3 +168,53 @@ def test_smtp_fanout_needs_many_distinct_targets():
     findings = a.detect_smtp_fanout(spam + benign, min_targets=50)
     assert len(findings) == 1
     assert findings[0].metrics["targets"] == 60
+
+
+def _flow(src, sport, dst, dport, ts):
+    from app.traffic.models import Flow
+
+    return Flow(
+        key=f"{src}:{sport}|{dst}:{dport}", a_ip=src, a_port=sport,
+        b_ip=dst, b_port=dport, first_ts=ts, last_ts=ts + 1,
+        initiator=src, responder=dst, target_port=dport,
+    )
+
+
+def test_irc_c2_detects_low_volume_periodic_channel():
+    """低频 IRC C2：只有几条流、端口 6667，扫描/洪泛类规则都不会响，必须由 irc_c2 抓住。"""
+    from app.traffic.analyzer import TrafficAnalyzer
+
+    a = TrafficAnalyzer()
+    flows = [_flow("10.0.0.7", 1027 + i, "38.229.70.20", 6667, 1000 + 60 * i) for i in range(4)]
+    flows += [_flow("10.0.0.9", 50000, "93.184.216.34", 80, 1000 + i) for i in range(10)]
+
+    findings = a.detect_irc_c2(flows)
+    assert len(findings) == 1, "只有挂 IRC 端口的主机该被报"
+    f = findings[0]
+    assert f.src_ip == "10.0.0.7" and f.severity == "high", "60s 规律间隔应判 high"
+    assert f.metrics["periodic"] is True
+    assert f.metrics["scope"], "要给出精确五元组，否则带标注评测匹配不到"
+
+
+def test_irc_c2_ignores_single_visit_and_普通站点():
+    from app.traffic.analyzer import TrafficAnalyzer
+
+    a = TrafficAnalyzer()
+    flows = [_flow("10.0.0.7", 41000, "1.2.3.4", 6667, 1000)]      # 只连一次
+    flows += [_flow("10.0.0.8", 41001, "5.6.7.8", 443, 1001 + i) for i in range(20)]
+    assert a.detect_irc_c2(flows) == []
+
+
+def test_irc_c2_collapses_symmetric_and_multi_client_noise():
+    """同一条通道从两侧各报一次、以及多个客户端连同一 IRC 服务器，都要合并成一条。"""
+    from app.traffic.analyzer import TrafficAnalyzer
+
+    a = TrafficAnalyzer()
+    # 被控端 10.0.0.7 与 C2 服务器 1.1.1.1:6667，服务器反向也各有一条
+    flows = [_flow("10.0.0.7", 2000 + i, "1.1.1.1", 6667, 100 + 30 * i) for i in range(5)]
+    flows += [_flow("1.1.1.1", 6667, "10.0.0.7", 2000 + i, 101 + 30 * i) for i in range(5)]
+    # 另外两个主机零星连同一服务器
+    flows += [_flow("10.0.0.8", 3000 + i, "1.1.1.1", 6667, 200 + 40 * i) for i in range(3)]
+    findings = a.detect_irc_c2(flows)
+    assert len(findings) == 1, [f.title for f in findings]
+    assert findings[0].src_ip == "10.0.0.7", "应保留连接数最多的被控端视角"

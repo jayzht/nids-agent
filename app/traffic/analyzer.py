@@ -19,6 +19,21 @@ from app.traffic.sanitize import scan_untrusted
 # 常见扫描器 / 自动化工具 UA（生产环境应该用情报库，这里给可解释的基线）
 _HTTP_PORTS = {80, 8000, 8080, 8081, 8888, 3128, 8008}
 
+# IRC 及其常见变体端口：僵尸网络最经典的 C2 通道（Rbot、Neris、Mirai 变种都用过）
+IRC_PORTS = {6667, 6668, 6669, 7000}
+
+_SCOPE_CAP = 50000
+
+
+def _scope_of(flows) -> list[list]:
+    """把 Flow 转成 [src, sport, dst, dport]，供带标注评测精确匹配。
+
+    Flow 的 a/b 两端按 (ip, port) 排序，方向不一定和 binetflow 一致，
+    但评测是双向匹配的，所以不要求方向。
+    """
+    return [[f.a_ip, f.a_port, f.b_ip, f.b_port] for f in flows][:_SCOPE_CAP]
+
+
 SUSPICIOUS_UA = (
     "msie 6.0", "python-requests/2.", "curl/7.", "wget/1.", "nikto", "sqlmap",
     "nmap", "masscan", "gobuster", "dirbuster", "zgrab", "nuclei",
@@ -76,7 +91,8 @@ class TrafficAnalyzer:
                     src_ip=src, dst_ip=sorted(dst_ips)[0], dst_port=min(ports),
                     metrics={"distinct_ports": len(ports),
                              "port_min": min(ports), "port_max": max(ports),
-                             "targets": sorted(dst_ips), "attempts": len(candidates)},
+                             "targets": sorted(dst_ips), "attempts": len(candidates),
+                             "scope": _scope_of(candidates)},
                     evidence=evidence,
                     knowledge_queries=[
                         "TCP SYN port scan detection suricata rule",
@@ -110,7 +126,7 @@ class TrafficAnalyzer:
                     ),
                     src_ip=src, dst_ip="", dst_port=sorted(ports)[0],
                     metrics={"hosts": len(hosts), "ports": sorted(ports)[:8],
-                             "attempts": len(items)},
+                             "attempts": len(items), "scope": _scope_of(items)},
                     evidence=sorted({f.evidence[0] for f in items if f.evidence})[:12],
                     knowledge_queries=[
                         "horizontal port scanning detection mirai botnet",
@@ -125,14 +141,16 @@ class TrafficAnalyzer:
 
         真实 Mirai 样本就是这种形态：42 次 SYN 打 192.168.0.2:23，随后上千个 TELNET 包。
         """
-        attempts: dict[tuple[str, str, int], list[int]] = defaultdict(list)
+        attempts: dict[tuple[str, str, int], list] = defaultdict(list)
         for p in packets:
             if "SYN" in p.flags and "ACK" not in p.flags and p.dport:
-                attempts[(p.src, p.dst, p.dport)].append(p.no)
+                attempts[(p.src, p.dst, p.dport)].append(p)
         findings: list[Finding] = []
-        for (src, dst, dport), nos in attempts.items():
-            if len(nos) < 20:
+        for (src, dst, dport), pkts in attempts.items():
+            if len(pkts) < 20:
                 continue
+            nos = [p.no for p in pkts]
+            scope = [[p.src, p.sport, p.dst, p.dport] for p in pkts][:_SCOPE_CAP]
             findings.append(
                 Finding(
                     id="", kind="repeated_attempts",
@@ -143,7 +161,7 @@ class TrafficAnalyzer:
                         f"属于口令爆破或自动化扫描的典型形态（Mirai 类僵尸网络扫 Telnet 就是这样）。"
                     ),
                     src_ip=src, dst_ip=dst, dst_port=dport,
-                    metrics={"attempts": len(nos), "target": f"{dst}:{dport}"},
+                    metrics={"attempts": len(nos), "target": f"{dst}:{dport}", "scope": scope},
                     evidence=nos[:12],
                     knowledge_queries=[
                         "telnet brute force detection suricata threshold",
@@ -193,6 +211,83 @@ class TrafficAnalyzer:
                 )
             )
         return findings
+
+    def detect_irc_c2(self, flows: list[Flow], min_connections: int = 3) -> list[Finding]:
+        """IRC 控制通道（`irc_c2`）：僵尸网络最经典、也最容易被忽略的 C2 形态。
+
+        为什么单独做一条规则：这类 C2 的流量**又少又小**——CTU-13 的 Rbot 场景里，
+        感染主机只有 63 条流挂在 IRC 通道上，既没有 DNS 洪泛也没有扫描扇出，
+        dns_volume/smtp_fanout 一条都不响，recall 直接是 0。它也不是端口扫描
+        （只有 1 个端口、1 个对端），beacon 又要求间隔高度规律（人工/客户端重连不一定满足）。
+
+        判定用的是「端口 + 会话形态」，不解析载荷：
+        - 一端是 IRC 端口（6667/6668/6669/7000），另一端就是被控端；
+        - 同一被控端累计 >= 3 条流即成立（单次访问不足以定性）；
+        - 间隔变异系数小（cv < 0.5）或多个不同 C2 对端 → high，否则 medium。
+        """
+        by_client: dict[str, list[tuple[Flow, tuple[str, int]]]] = defaultdict(list)
+        for f in flows:
+            if f.b_port in IRC_PORTS and f.a_port not in IRC_PORTS:
+                by_client[f.a_ip].append((f, (f.b_ip, f.b_port)))
+            elif f.a_port in IRC_PORTS and f.b_port not in IRC_PORTS:
+                by_client[f.b_ip].append((f, (f.a_ip, f.a_port)))
+
+        findings: list[Finding] = []
+        peer_owner: dict[str, int] = {}      # 对端 IP -> 它作为客户端时的最大连接数
+        for client, items in by_client.items():
+            if len(items) < min_connections:
+                continue
+            peers = {peer for _, peer in items}
+            for ip, _ in peers:
+                peer_owner[ip] = max(peer_owner.get(ip, 0), len(items))
+            times = sorted(f.first_ts for f, _ in items)
+            gaps = [b - a for a, b in zip(times, times[1:])]
+            mean = statistics.fmean(gaps) if gaps else 0.0
+            cv = statistics.pstdev(gaps) / mean if gaps and mean > 0 else 9.9
+            periodic = bool(gaps) and mean >= 5 and cv <= 0.5
+            severity = "high" if periodic or len(peers) >= 2 else "medium"
+            peer_txt = "、".join(f"{ip}:{port}" for ip, port in sorted(peers)[:3])
+            findings.append(
+                Finding(
+                    id="", kind="irc_c2", severity=severity,
+                    title=f"{client} 存在 IRC 控制通道（{peer_txt}）",
+                    detail=(
+                        f"{client} 与 IRC 端口上的 {len(peers)} 个对端共有 {len(items)} 条会话"
+                        f"（{peer_txt}）。IRC 是僵尸网络最常用的 C2 通道；"
+                        + (f"平均间隔 {mean:.1f}s、变异系数 {cv:.2f}，呈现周期性心跳特征。"
+                           if periodic else
+                           "虽然间隔不够规律，但「少量固定对端 + 专用 IRC 端口」本身已足够可疑。")
+                        + "这条规则不解析载荷（不依赖 PRIVMSG 等明文关键字），加密/自定义协议也能命中。"
+                    ),
+                    src_ip=client,
+                    dst_ip=sorted(peers)[0][0] if peers else "",
+                    dst_port=sorted(peers)[0][1] if peers else 0,
+                    metrics={
+                        "connections": len(items), "peers": len(peers),
+                        "peer_list": [f"{ip}:{port}" for ip, port in sorted(peers)][:20],
+                        "mean_interval": round(mean, 2), "cv": round(cv, 3),
+                        "periodic": periodic, "scope": _scope_of([f for f, _ in items]),
+                    },
+                    evidence=sorted({f.evidence[0] for f, _ in items if f.evidence})[:12],
+                    knowledge_queries=[
+                        "botnet IRC command and control detection",
+                        "sigma rule irc c2 traffic",
+                        "suricata rule irc botnet port 6667",
+                    ],
+                )
+            )
+
+        # 抑制重复告警，两层：
+        # 1) 同一条通道会从两侧各报一次（被控端视角 + C2 服务器视角），只留连接数多的那条；
+        # 2) 多个客户端连同一个 IRC 服务器时，只保留连接数最多的那条（其余是同一现象的碎片）。
+        kept = [f for f in findings if peer_owner.get(f.src_ip, 0) <= f.metrics["connections"]]
+        best: dict[str, Finding] = {}
+        for f in kept:
+            key = f.metrics["peer_list"][0] if len(f.metrics["peer_list"]) == 1 else f.src_ip
+            cur = best.get(key)
+            if cur is None or f.metrics["connections"] > cur.metrics["connections"]:
+                best[key] = f
+        return list(best.values())
 
     def detect_dns_volume(self, dns: list[dict], threshold: int = 5000) -> list[Finding]:
         """单主机 DNS 请求量异常：DGA / DNS 隧道 / 垃圾邮件投递的常见前置行为。
@@ -262,16 +357,16 @@ class TrafficAnalyzer:
         return findings
 
     def detect_beacon(self, flows: list[Flow], packets) -> list[Finding]:
-        syn_times: dict[tuple[str, str, int], list[tuple[float, int]]] = defaultdict(list)
+        syn_times: dict[tuple[str, str, int], list] = defaultdict(list)
         for p in packets:
             if "SYN" in p.flags and "ACK" not in p.flags:
-                syn_times[(p.src, p.dst, p.dport)].append((p.ts, p.no))
+                syn_times[(p.src, p.dst, p.dport)].append(p)
 
         findings: list[Finding] = []
         for (src, dst, dport), hits in syn_times.items():
             if len(hits) < 6:
                 continue
-            times = sorted(t for t, _ in hits)
+            times = sorted(p.ts for p in hits)
             gaps = [b - a for a, b in zip(times, times[1:])]
             mean = statistics.fmean(gaps)
             if mean < 5:
@@ -289,8 +384,9 @@ class TrafficAnalyzer:
                     ),
                     src_ip=src, dst_ip=dst, dst_port=dport,
                     metrics={"connections": len(hits), "mean_interval": round(mean, 2),
-                             "cv": round(cv, 3), "target": f"{dst}:{dport}"},
-                    evidence=[no for _, no in sorted(hits)[:10]],
+                             "cv": round(cv, 3), "target": f"{dst}:{dport}",
+                             "scope": [[p.src, p.sport, p.dst, p.dport] for p in hits][:_SCOPE_CAP]},
+                    evidence=[p.no for p in sorted(hits, key=lambda x: x.ts)[:10]],
                     knowledge_queries=[
                         "beaconing detection periodic C2 traffic",
                         "suricata flow keyword established rule",
@@ -521,6 +617,7 @@ class TrafficAnalyzer:
         findings += self.detect_dns_volume(dns)
         findings += self.detect_smtp_fanout(flows)
         findings += self.detect_beacon(flows, packets)
+        findings += self.detect_irc_c2(flows)
         findings += self.detect_suspicious_http(http)
         cleartext = pc.read_cleartext_http(path)
         findings += self.detect_cleartext_http(path)
