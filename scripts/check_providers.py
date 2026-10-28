@@ -90,14 +90,30 @@ async def check_embedding(s, kb: str | None) -> tuple[bool, str]:
 
 
 async def check_rerank(s) -> tuple[bool, str]:
-    if s.rerank_mode != "http":
-        return True, f"未启用（RERANK_MODE={s.rerank_mode}）"
+    if s.rerank_mode == "none":
+        return True, "未启用（RERANK_MODE=none）"
     docs = [
         "suricata 的 eve.json 里 flow 事件的字段说明",
         "用 tshark 提取 http.user_agent 字段做统计",
         "如何用 Ollama 部署本地大模型",
     ]
     query = "怎么从 http 流量里取 user_agent"
+
+    if s.rerank_mode == "local":
+        # 本地 cross-encoder：真正加载一次权重，最容易出错的是路径不对
+        try:
+            from app.retrieval.rerank import _score_pairs
+
+            started = time.perf_counter()
+            scores = await asyncio.to_thread(_score_pairs, query, docs, 512)
+            ms = (time.perf_counter() - started) * 1000
+        except Exception as exc:  # noqa: BLE001
+            return False, f"local · {type(exc).__name__}: {str(exc)[:200]}"
+        order = sorted(range(len(docs)), key=lambda i: scores[i], reverse=True)
+        good = order[0] in (0, 1) and order[-1] == 2
+        detail = f"local · {s.rerank_model_path} · {ms:.0f}ms · 排序 {order}"
+        return (True, detail + " → 匹配") if good else (False, detail + " → 排序异常，检查权重")
+
     started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=s.rerank_timeout) as c:

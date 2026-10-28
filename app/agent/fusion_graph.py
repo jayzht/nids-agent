@@ -24,9 +24,9 @@ import uuid
 from typing import Annotated, Any, AsyncIterator, TypedDict
 import operator
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from app.agent.checkpointer import get_checkpointer
 from app.agent.state import Step
 from app.core.llm import ainvoke_text, with_no_think
 from app.core.text import truncate
@@ -152,7 +152,7 @@ class FusionAgent:
         g.add_conditional_edges("verify", self.route_after_verify,
                                 {"report": "report", "finalize": "finalize"})
         g.add_edge("finalize", END)
-        return g.compile(checkpointer=MemorySaver())
+        return g.compile(checkpointer=get_checkpointer())
 
     # ------------------------------------------------------------ Agent 1
     async def node_behavior(self, state: FusionState) -> dict[str, Any]:

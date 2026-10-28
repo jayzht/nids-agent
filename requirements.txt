@@ -8,5 +8,7 @@ numpy>=1.26
 
 # ===== Agent 编排 =====
 langgraph>=1.0,<2
+# 检查点持久化（多轮记忆落 SQLite，重启不丢）
+langgraph-checkpoint-sqlite>=3.0
 langchain-core>=1.0,<2
 langchain-openai>=1.0,<2

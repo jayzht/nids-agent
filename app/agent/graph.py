@@ -29,9 +29,9 @@ import time
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from app.agent.checkpointer import get_checkpointer
 from app.agent import prompts
 from app.agent.state import RAGState
 from app.core.llm import ainvoke_text, with_no_think
@@ -84,7 +84,7 @@ class RAGAgent:
         )
         g.add_edge("finalize", END)
         g.add_edge("no_answer", END)
-        return g.compile(checkpointer=MemorySaver())
+        return g.compile(checkpointer=get_checkpointer())
 
     # ------------------------------------------------------------- helpers
     def _history(self, state: RAGState) -> str:

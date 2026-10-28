@@ -13,6 +13,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import chat, evals, kb, siem, traffic
+from app.agent.checkpointer import close as close_checkpointer
+from app.agent.checkpointer import setup as setup_checkpointer
 from app.deps import get_siem_store
 from app.kb import get_kb_manager
 from app.siem.tailer import watch
@@ -44,16 +46,21 @@ async def lifespan(app: FastAPI):
             except Exception as exc:  # noqa: BLE001
                 logger.warning("预热 %s 失败：%s", n, exc)
 
+    await setup_checkpointer(s)
+
     task = asyncio.create_task(preload())
     tail_task = None
     if s.siem_tail_paths:
         tail_task = asyncio.create_task(
             watch(s.siem_tail_paths, get_siem_store(), s.siem_tail_interval)
         )
-    yield
-    task.cancel()
-    if tail_task:
-        tail_task.cancel()
+    try:
+        yield
+    finally:
+        task.cancel()
+        if tail_task:
+            tail_task.cancel()
+        await close_checkpointer()
 
 
 app = FastAPI(

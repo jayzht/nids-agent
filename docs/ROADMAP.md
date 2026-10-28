@@ -15,9 +15,11 @@
    环境变量 `LANGCHAIN_TRACING_V2=true` + `LANGCHAIN_API_KEY`，把每个节点的输入输出、token 数、耗时打上去。
    面试时能说「我怎么定位一次慢查询」比「我知道 LangSmith」值钱得多。
 
-3. **把检查点从内存换成 SQLite / Postgres**
-   `MemorySaver` → `SqliteSaver`（`langgraph-checkpoint-sqlite`），验证「杀掉进程再聊，记忆还在」。
-   这一步能讲清 checkpointer 与 messages 的区别。
+3. ~~把检查点从内存换成 SQLite / Postgres~~ ✅ **已完成**
+   `MemorySaver` → `AsyncSqliteSaver`（`langgraph-checkpoint-sqlite`），落 `data/checkpoints.sqlite`；
+   已实测「杀掉进程、重启、用同一 `session_id` 追问，记忆还在」。
+   这一步能讲清 checkpointer 与 messages 的区别：messages 只是状态里的一个字段，
+   checkpointer 存的是**整个图状态在每个 super-step 的快照**，所以能断点续跑和时间旅行。
 
 ## B. 加分（3~5 天，拉开与「调包侠」的差距）
 

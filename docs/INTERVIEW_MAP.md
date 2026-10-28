@@ -37,11 +37,11 @@
 | 状态设计 | `agent/state.py` | TypedDict + reducer（`Annotated[list, add]`）；状态必须可序列化 |
 | 条件边 | `route_after_grade / route_after_verify` | 把「决策」写成纯函数，便于单测和回放 |
 | 循环与上限 | `max_retrieval_attempts`, `recursion_limit` | 没有上限的 Agent 循环 = 线上事故 |
-| 检查点 / 记忆 | `MemorySaver` + `thread_id` | 多轮会话、断点续跑、时间旅行（replay）；生产换 PostgresSaver |
+| 检查点 / 记忆 | `agent/checkpointer.py` + `thread_id` | 异步图必须用 `AsyncSqliteSaver`（同步版不支持 `astream`）；重启后记忆还在；多实例换 PostgresSaver |
 | 流式 | `RAGAgent.astream` | `stream_mode=["updates","messages"]`；节点级事件 vs token 级事件 |
 | 工具调用 | `agent/tools.py`, `agent/react.py` | tool schema 设计、工具数量与选择准确率、工具返回值要给模型「下一步提示」 |
 | 人机协同 | 未实现（见 ROADMAP） | `interrupt_before` + 人工审批；什么场景需要 |
-| 多 Agent | 未实现 | supervisor / handoff / 共享状态；什么时候不该上多 Agent |
+| 多 Agent | `agent/fusion_graph.py`（行为 ∥ 签名 → 融合） | 并行 fan-out/join 用 reducer 合并；为什么不是 supervisor；什么时候不该上多 Agent |
 
 ## 三·五、流量取证（pcap → 报告）
 

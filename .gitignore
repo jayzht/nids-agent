@@ -21,6 +21,7 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 data/benchmark_last.json
+data/checkpoints.sqlite*
 
 # ---- 临时文件 ----
 tmp/

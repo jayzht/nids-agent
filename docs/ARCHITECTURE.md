@@ -108,8 +108,9 @@ ids.json       # 行号 -> chunk_id
 
 ## 5. 已知取舍 / 下一步
 
-- 检查点是内存版 `MemorySaver`，进程重启即失忆 → 换 `SqliteSaver` / `PostgresSaver`；
+- 检查点已落 SQLite（`AsyncSqliteSaver`，`data/checkpoints.sqlite`），杀进程再聊记忆还在；
+  多实例部署时换 `PostgresSaver`；
 - 无鉴权、无租户隔离 → 生产要加 API Key + KB 级 ACL；
-- rerank 是规则版，效果上限低于 cross-encoder → 换 `bge-reranker-v2-m3`；
+- rerank 已是 cross-encoder（`bge-reranker-v2-m3`），本地 3~5s/次 → 上云或 GPU 服务降到 1s 内；
 - 没有增量索引（改一篇文档全量重建）→ 用内容指纹做 diff；
 - 没有 tracing → 接 LangSmith / OpenTelemetry。

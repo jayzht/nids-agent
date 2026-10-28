@@ -15,9 +15,9 @@ import time
 import uuid
 from typing import Any, AsyncIterator
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from app.agent.checkpointer import get_checkpointer
 from app.agent.state import Step
 from app.core.llm import complete_json, get_chat_model, with_no_think
 from app.core.text import truncate
@@ -119,7 +119,7 @@ class TrafficAgent:
         g.add_conditional_edges("verify", self.route_after_verify,
                                 {"report": "report", "finalize": "finalize"})
         g.add_edge("finalize", END)
-        return g.compile(checkpointer=MemorySaver())
+        return g.compile(checkpointer=get_checkpointer())
 
     # ---------------------------------------------------------------- nodes
     async def node_load(self, state: TrafficState) -> dict[str, Any]:

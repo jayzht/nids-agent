@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # 配置后服务启动时会自动 tail 这些 eve.json（相对路径按 BASE_DIR 解析）
     siem_tail_paths: list[str] = Field(default_factory=list)
     siem_tail_interval: float = 5.0
+    # ---------- 检查点（多轮记忆） ----------
+    checkpoint_backend: str = "sqlite"   # sqlite（持久，重启不丢）| memory（仅测试）
+    checkpoint_db: Path = BASE_DIR / "data" / "checkpoints.sqlite"
 
     # ---------- LLM（OpenAI 兼容协议：Ollama / DeepSeek / 通义 / vLLM 都能接） ----------
     llm_base_url: str = "http://127.0.0.1:11434/v1"

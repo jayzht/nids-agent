@@ -62,13 +62,12 @@ uvicorn app.main:app --port 8000     # http://127.0.0.1:8000
 | 索引构建 | 约 53 秒（CPU，8 核并行向量化） | bge-m3，1024 维 |
 | 检索质量（技术文档） | recall@6 **0.893** / MRR 0.757 / nDCG@6 0.791 | 28 题 golden set |
 | 检索质量（NIDS 领域） | recall@6 **1.00** / MRR 0.837 / nDCG@6 0.878 | 22 题 golden set（含 6 题 ATT&CK） |
-| 单次问答 | **5.6 秒**（全 API：DeepSeek） / 12 秒（本地向量+重排） | 5 次 LLM 调用；换后端只改环境变量 |
+| 单次问答 | **5~7 秒**（hybrid 检索，不重排） / 13~17 秒（+ 本地 cross-encoder） | 5 次 LLM 调用；换后端只改环境变量 |
 | 流量取证 | 16~39 秒/份 pcap | 规则引擎 <1s，其余是 LLM；确定性结论没 LLM 也能出 |
 | 真实样本（30 份） | 行为 9/30，签名补足 16，**合计 25/30（83%）** | 误报对照 0/1 |
-| 真实恶意流量 | 12 份，**5 份产生告警（42%）**，误报对照 0 触发 | 见 `docs/REAL_TRAFFIC_BENCHMARK.md` |
 | 提示注入 | 检测 + 隔离 + 消毒 + 输出校验 | 对抗样本验证：模型没有照做，反而把注入当攻击上报 |
 | 多 Agent 融合 | 行为 + Suricata(52,752 条 ET 规则) 并行 | dnscat2 的 4,837 条告警 → 1 条结论 |
-| 成本 | 0 元 | 全部本地 Ollama |
+| 成本 | DeepSeek 约 0.01 元/问；embedding 本机免费 | 生成走云端，向量用本地 bge-m3 |
 
 > 数字不好看没关系，**能解释为什么**才是重点。比如 recall@6 只有 0.89，我会说：
 > 3 道题失败在「LangChain 与 LangGraph 文档内容重叠」，属于语料本身的歧义，不是检索器的问题。
@@ -691,6 +690,33 @@ BM25 的价值在于「类名 / 错误码 / 版本号」这类精确词，属于
 - 建库是耗时任务，走 `202 + 轮询进度`，不阻塞 HTTP；
 - `X-Accel-Buffering: no` 防止 Nginx 缓冲导致「假流式」—— 这个坑线上必踩。
 
+### 6. 记忆：检查点为什么必须用异步版
+
+第一版四个图都用 `MemorySaver`：服务一重启，同一个 `session_id` 的追问就失忆，
+而且没有 TTL，长期跑内存只涨不落。换持久化时踩了一个点：
+
+**同步的 `SqliteSaver` 在异步图里不能用**。四个图都是 `astream` / `aget_state` 调用的，
+LangGraph 会去调 `aget_tuple` 这类异步方法，同步版没实现，必须在
+`langgraph.checkpoint.sqlite.aio` 里用 `AsyncSqliteSaver`（底层是 `aiosqlite` 的线程连接）。
+
+另一个坑是生命周期：`AsyncSqliteSaver.from_conn_string()` 是异步上下文管理器，
+连接只能在事件循环里建。所以 `app/agent/checkpointer.py` 这样分层：
+
+```python
+# 服务：lifespan 启动时初始化，四个图共享同一个 saver
+await setup(settings)          # AsyncSqliteSaver.setup() 建表
+...
+await close()                  # 关闭连接
+
+# 脚本 / 测试：没初始化就退回 MemorySaver，不产生文件、不依赖事件循环
+get_checkpointer() -> MemorySaver()
+```
+
+验证方式是打真实的重启：发一轮问题 → `kill` 掉 uvicorn → 重启 → 用同一 `session_id`
+问「我最开始问的是哪个日志里的哪类事件」，答出了 `eve.json` 的 `flow` 事件。
+这一条比「我用了 SqliteSaver」值钱：checkpointer 存的是**整个图状态在每个 super-step 的快照**，
+而 `messages` 只是状态里的一个字段——所以前者能做断点续跑和时间旅行，后者只能当聊天记录用。
+
 ---
 
 ## 八、API
@@ -770,12 +796,19 @@ CPU 推理约 4~5s/次；多查询场景已改成「先合并候选、只重排�
 
 | 形态 | 生成 | 检索 | 重排 | recall@6 | MRR | nDCG@6 | 延迟 |
 |---|---|---|---|---:|---:|---:|---:|
-| **全 API（当前）** | DeepSeek | 纯 BM25 | DeepSeek listwise | 0.955 | 0.776 | 0.822 | **5.6s** |
-| 混合检索，无重排 | DeepSeek | bge-m3 + BM25 | 无 | 1.000 | 0.835 | 0.876 | 7s |
-| 混合检索 + 本地 CE | DeepSeek | bge-m3 + BM25 | bge-reranker | 1.000 | **0.895** | **0.922** | 12s |
+| 纯 BM25（兜底） | DeepSeek | 纯 BM25 | DeepSeek listwise | 0.955 | 0.776 | 0.822 | 5.6s |
+| **hybrid，不重排（默认）** | DeepSeek | bge-m3 + BM25 | 无 | 1.000 | 0.835 | 0.876 | **5~7s** |
+| hybrid + 本地 CE | DeepSeek | bge-m3 + BM25 | bge-reranker（CPU） | 1.000 | **0.895** | **0.922** | 13~17s |
+| hybrid + 云端 CE | DeepSeek | bge-m3 + BM25 | 硅基流动 rerank | 1.000 | 0.895* | 0.922* | ~7s* |
 
-全 API 形态零本地模型、零显存，代价是 MRR 低 0.12——因为 DeepSeek 不提供 embeddings，
-只能用 BM25（纯词面匹配）。想要质量就换回 bge-m3；想要省事就全 API。
+\* 同一个模型（bge-reranker-v2-m3），差别只在推理位置，指标按本地实测值预期。
+
+默认选「hybrid 不重排」是因为它在质量和延迟之间最好：重排带来的 MRR +0.06
+要花 6~10 秒，交互场景不划算；需要最高质量时 `RERANK_MODE=local`，
+接入云端 rerank 则两者兼得（`RERANK_MODE=http`）。
+
+纯 BM25 形态零本地模型、零显存，代价是 MRR 低 0.12——因为 DeepSeek 不提供 embeddings，
+只能用 BM25（纯词面匹配）。
 
 补充一条实测：hybrid 检索本身已经很好时，**不要**再叠 LLM 重排
 （DeepSeek listwise 在 hybrid 上 MRR 0.835 → 0.758，耗时还从 5.1s 涨到 22.1s）。
@@ -802,18 +835,18 @@ CPU 推理约 4~5s/次；多查询场景已改成「先合并候选、只重排�
 
 | 问题 | 现状 | 怎么改 |
 |---|---|---|
-| 检查点在内存 | 重启后多轮记忆丢失 | 换 `SqliteSaver` / `PostgresSaver` |
+| ~~检查点在内存~~ | ✅ 已换 `AsyncSqliteSaver`，落 `data/checkpoints.sqlite`，重启后接着聊 | 多实例部署时换 `PostgresSaver` |
 | 没有增量索引 | 改一篇文章要全量重建 | 用 chunk 指纹做 diff |
-| 重排两种实现 | 全 API 用 LLM listwise（+1s）；本地 cross-encoder 质量更高但 +4.5s | `RERANK_MODE=llm/local/http` 三选一 |
+| 重排三种实现 | 默认本地 cross-encoder；`none` 快 5s；`http` 走云端更快 | 见「重排 A/B」一节的实测选择 |
 | 无鉴权/多租户 | 单机 Demo | API Key + KB 级 ACL |
 | CPU 推理慢 | 25~40 秒/问 | 上 GPU、或 `LLM_FAST_MODEL` 用小模型做路由/打分 |
-| 评测集偏小 | 44 题（技术 28 + 领域 16） | 扩到 100+ 并按问题类型分桶 |
+| 评测集偏小 | 50 题（技术 28 + 领域 22），已够做 A/B，不够做显著性检验 | 扩到 100+ 并按问题类型分桶 |
 | RST 转换是启发式的 | 表格/复杂 directive 可能降级成纯文本 | 换 `docutils` 走正规 AST；或直接抓 HTML 版文档 |
 | 领域库每次要联网抓 | 论文/文档更新需重跑 fetch | 加定时任务 + 内容指纹增量索引 |
 | 流量分析依赖 tshark | 没装就只能降级 | 容器镜像里固定 tshark 版本 |
 | 注入隔离 | ✅ 已做检测/隔离/消毒/输出校验 | 仍建议加一个专门的内容分类器 |
-| 真实样本覆盖有限 | 12 份，只有行为类攻击 | 扩到 CICIDS / CTU-13（体积大，需单独下载） |
-| SIEM 消费位点 | 已落 SQLite，但还没有「从 eve.json 增量消费」的游标 | 加文件偏移量 + 定时任务 |
+| 真实样本覆盖有限 | 30 份恶意 + 1 份正常对照，检出 25/30（83%） | 补 CICIDS / CTU-13 这类**带标注**的流量，才能算精确率/召回率 |
+| ~~SIEM 消费位点~~ | ✅ 已做 `EveTailer`：offset + inode + 半行缓冲 + 截断检测 | 多实例时换分布式游标 |
 
 ---
 

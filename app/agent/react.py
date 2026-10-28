@@ -14,9 +14,9 @@ import uuid
 from typing import Any, AsyncIterator
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
+from app.agent.checkpointer import get_checkpointer
 from app.agent import prompts
 from app.agent.tools import build_tools
 from app.core.llm import get_chat_model
@@ -61,7 +61,7 @@ class ReActDocAgent:
             get_chat_model(),
             self.tools,
             prompt=prompts.REACT_SYSTEM,
-            checkpointer=MemorySaver(),
+            checkpointer=get_checkpointer(),
         )
 
     async def astream(
