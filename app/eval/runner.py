@@ -51,8 +51,11 @@ async def run_eval(
     kb: str | None = None,
     mode: str = "retrieval",
     top_k: int = 6,
+    limit: int | None = None,
 ) -> dict[str, Any]:
     rows = load_dataset(kb)
+    if limit:
+        rows = rows[:limit]
     if not rows:
         return {"error": "评估集为空", "num_questions": 0}
 

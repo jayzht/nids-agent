@@ -28,6 +28,7 @@ async def main() -> None:
     ap.add_argument("--kb", default=None)
     ap.add_argument("--mode", default="retrieval", choices=["retrieval", "end2end"])
     ap.add_argument("--top-k", type=int, default=6)
+    ap.add_argument("--limit", type=int, default=None, help="只跑前 N 题（快速对比用）")
     ap.add_argument("--json", action="store_true", help="输出完整 JSON")
     args = ap.parse_args()
 
@@ -38,6 +39,7 @@ async def main() -> None:
         kb=args.kb,
         mode=args.mode,
         top_k=args.top_k,
+        limit=args.limit,
     )
 
     if args.json:
