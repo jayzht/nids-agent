@@ -553,6 +553,22 @@ EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
 EMBEDDING_MODEL=BAAI/bge-m3
 ```
 
+换完先跑体检，确认三件事都正常（尤其是 embedding 维度与索引是否一致——
+这类错误不会报错，只会让检索结果静默变差）：
+
+```bash
+.venv/bin/python scripts/check_providers.py --kb ids
+```
+
+```
+✅ llm        deepseek-chat · 466ms · 回复 'ok'
+✅ embedding  BAAI/bge-m3 · 1024 维 · 412ms | 索引 ids: bge-m3 / 1024 维 → 匹配
+✅ rerank     siliconflow · BAAI/bge-reranker-v2-m3 · 380ms · 排序 [0, 1, 2]
+```
+
+它还会对 rerank 做一次排序正确性检查：拿一个 query 配 3 条候选（2 相关 1 无关），
+如果无关那条没被排到最后，说明协议或模型接错了。
+
 想用 Qdrant：`docker compose up -d qdrant` + `VECTOR_BACKEND=qdrant`。
 
 ---
@@ -728,6 +744,7 @@ make sweep                                 # 扫超参，选最优融合方式�
 | 重排（英文检索式） | — | 1.000 | 0.744 | 0.809 |
 | **重排（中文原问题 + 标题）** | **0.818** | 1.000 | **0.895** | **0.922** |
 | 重排（混合权重 0.3 / 0.7） | 0.773 | 1.000 | 0.873 / 0.858 | 0.905 / 0.893 |
+| 重排换成 DeepSeek listwise | 0.591 | 1.000 | 0.758 | 0.819 |
 
 第一版是负的（0.744）。排查后发现两个问题，都不是模型本身：
 
@@ -735,6 +752,12 @@ make sweep                                 # 扫超参，选最优融合方式�
    改成用用户的**原始中文问题**做重排（检索仍用英文改写式），MRR 0.744 → 0.865。
 2. **片段丢了标题**：`heading_path` 里才是 `http.user_agent`、`flow:established` 这些 API 名。
    把标题拼进 rerank 的 passage，MRR 0.865 → **0.895**。
+
+第二个负结果也值得记：把重排换成 **LLM（DeepSeek listwise）**,MRR 掉到 0.758、耗时
+22.1s，比不重排（0.835 / 5.1s）还差。原因是 listwise 打分在有噪声时不稳定，
+而 cross-encoder 是逐条比较、方差小。所以「LLM 重排」只在检索本身很弱（纯 BM25）时才划算：
+它在 sparse 上把 MRR 从 0.676 拉到 0.776，但在 hybrid 上是净负收益。
+**结论：重排用 cross-encoder，不要在 hybrid 上叠 LLM 重排。**
 
 最终 **MRR +7%、nDCG +5%、hit@1 +9 个百分点**，`RERANK_BLEND=0.5` 最优。
 CPU 推理约 4~5s/次；多查询场景已改成「先合并候选、只重排一次」，端到端 12.0s。
@@ -753,6 +776,10 @@ CPU 推理约 4~5s/次；多查询场景已改成「先合并候选、只重排�
 
 全 API 形态零本地模型、零显存，代价是 MRR 低 0.12——因为 DeepSeek 不提供 embeddings，
 只能用 BM25（纯词面匹配）。想要质量就换回 bge-m3；想要省事就全 API。
+
+补充一条实测：hybrid 检索本身已经很好时，**不要**再叠 LLM 重排
+（DeepSeek listwise 在 hybrid 上 MRR 0.835 → 0.758，耗时还从 5.1s 涨到 22.1s）。
+重排只该用 cross-encoder。
 
 注意「全 API」不等于「只能用 BM25」：把 embedding 换成硅基流动的 `BAAI/bge-m3`
 （同模型同维度，索引不用重建），就能在零本地进程的前提下拿到 hybrid 的召回，
