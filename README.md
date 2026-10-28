@@ -944,9 +944,11 @@ Engelen et al. 在 [Troubleshooting an Intrusion Detection Dataset: the CICIDS20
 | **IoT-23 v2** | 23 场景，pcap ~140MB + Zeek conn 日志 | `*-zeek-conn-log.labeled`，逐流 `label` 字段 | 要写个小适配器（TSV + `#fields` 表头），约 40 行 |
 | UNSW-NB15 / NSL-KDD | 纯 flow CSV | 有 | 不适合：**没有 pcap**，我们的链路是包级的 |
 
-已试跑 IoT-23（`CTU-IoT-Malware-Capture-1-1`，Hide-and-Seek，146MB，100 万条流）：
-**recall 0.016 / FPR 0.0002 / precision 0.991**。IoT 僵尸网络的 C2 是低速率、加密、
-量级也不大，我们的「量级/周期」类检测器几乎抓不到——和 Hancitor 的结论一致。
+已跑 IoT-23（`CTU-IoT-Malware-Capture-1-1`，Hide-and-Seek，146MB，100 万条流）：
+第一版 recall **0.016**，补了 `fanout_attempts` + 覆盖规则后到 **1.000 / FPR 0.0002**。
+原因很具体：`horizontal_scan` 只统计「SYN 后没有数据」的连接，而这类 Telnet 爆破
+**握手会完成**，整批被排除；同时 53 万条流不可能逐条塞进告警证据，于是改成
+`scope_rules`（一条 `{"src": "...", "dport": 23}` 表达整批）。
 
 已试跑 Hancitor（`CTU-Malware-Capture-Botnet-409-2`，2021 年，20MB，4965 条流）：
 **recall 0.035 / FPR 0.000**——行为检测器一条都没响，只有 Suricata 的 3 条规则命中。
@@ -969,10 +971,12 @@ python scripts/eval_labeled.py --scenario 1 --with-signature --write-doc
 
 | 场景 | 感染家族 | 裁剪后流数 | recall | FPR | precision |
 |---|---|---:|---:|---:|---:|
-| 1 | Neris（IRC + DGA + 垃圾邮件）| 46,712 | **0.902** | 0.0323 | 0.995 |
-| 8 | Murlo（Qvod 播放器）| 268,428 | **0.947** | 0.0014 | 0.941 |
-| 3 | Rbot（SSH 传播 + IRC C2）| 72,115 | **0.983** | 0.0617 | 0.904 |
-| 12 | Sogou | 6,449 | 0.005 | 0.0000 | 1.000 |
+| CTU-13 / 1 | Neris（IRC + DGA + 垃圾邮件）| 46,712 | **0.993** | 0.0329 | 0.995 |
+| CTU-13 / 8 | Murlo（Qvod 播放器）| 268,428 | **0.949** | 0.0014 | 0.941 |
+| CTU-13 / 3 | Rbot（SSH 传播 + IRC C2）| 72,115 | **1.000** | 0.0617 | 0.906 |
+| CTU-13 / 12 | Sogou | 6,449 | 0.005 | 0.0000 | 1.000 |
+| **IoT-23 / 1-1** | Hide-and-Seek（IoT，Telnet 扇出）| 1,008,748 | **1.000** | 0.0002 | 1.000 |
+| CTU-Malware / 409-2 | Hancitor（加密代理 C2）| 313 | 0.035 | 0.0000 | 1.000 |
 
 这份数据把三件原来测不出来的事测出来了：
 
@@ -1030,7 +1034,8 @@ python scripts/eval_labeled.py --scenario 1 --with-signature --write-doc
 | ~~Sigma 只有规则没有规范页~~ | ✅ 已并入 `SigmaHQ/sigma-specification` 的 9 篇（规则规格/过滤器/修饰符/关联/约定），`ids` 重建后 MRR 0.895 → 0.898 | 规范里也没有「CommandLine 字段」这种日志源级字段，仍需接 logsource 映射 |
 | 流量分析依赖 tshark | 没装就只能降级 | 容器镜像里固定 tshark 版本 |
 | 注入隔离 | ✅ 已做检测/隔离/消毒/输出校验 | 仍建议加一个专门的内容分类器 |
-| 带标注评测仍有 1 个场景不可用 | CTU-13 场景 12 的 pcap 只覆盖 2 分钟、与标注时间窗不重叠；场景 5 完全对不上 | 换 CICIDS2017 补跨数据集验证 |
+| 带标注评测仍有 1 个场景不可用 | CTU-13 场景 12 的 pcap 只覆盖 2 分钟、与标注时间窗不重叠；场景 5 完全对不上 | 换带标注的 pcap 数据集（参见数据集选型一节） |
+| 加密 C2 仍抓不到 | Hancitor（经代理的 HTTPS C2）recall 0.035，只有 Suricata 那 3 条规则命中 | 要 JA3/JA4 指纹 + 长连接周期性分析，不是再加行为规则能解决的 |
 | 误报率是标签口径上界 | 3~6% 里包含「外部主机打进感染主机的扫描」——数据集把它们标成 Background | 需要人工复核那部分，才能给出真实误报率 |
 | 精选样本与带标注样本差距大 | 精选 30 份 100%，CTU-13 场景 1 只有 75%——样本构成不同，别只报前者 | 对外统一引用 `docs/LABELED_EVAL.md` 的口径 |
 | 心跳/周期性检测缺方法论 | 语料里提到 beaconing 的只有几篇，且都不讲周期性判定（jitter/自相关/评分） | 收 RITA 一类工具的文档（站点 403）或专门论文；arXiv 上 `beaconing` 基本被 V2X 占用 |

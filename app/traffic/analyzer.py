@@ -25,6 +25,16 @@ IRC_PORTS = {6667, 6668, 6669, 7000}
 _SCOPE_CAP = 50000
 
 
+def _rule(**kw) -> dict:
+    """覆盖范围规则：只给「被判定涉及」的字段，缺省表示不限定。
+
+    为什么需要它：扫描类告警可能涉及几十万条流（IoT-23 的 Hide-and-Seek 场景
+    光扫描就 53 万条），逐条五元组既撑爆内存也没必要——一条规则
+    `{"src": "10.0.0.5", "dport": 23}` 就精确表达了「它扫了这批主机的 23 端口」。
+    """
+    return {k: v for k, v in kw.items() if v is not None}
+
+
 def _scope_of(flows) -> list[list]:
     """把 Flow 转成 [src, sport, dst, dport]，供带标注评测精确匹配。
 
@@ -126,7 +136,8 @@ class TrafficAnalyzer:
                     ),
                     src_ip=src, dst_ip="", dst_port=sorted(ports)[0],
                     metrics={"hosts": len(hosts), "ports": sorted(ports)[:8],
-                             "attempts": len(items), "scope": _scope_of(items)},
+                             "attempts": len(items), "scope": _scope_of(items),
+                             "scope_rules": [_rule(src=src, dport=p) for p in sorted(ports)][:50]},
                     evidence=sorted({f.evidence[0] for f in items if f.evidence})[:12],
                     knowledge_queries=[
                         "horizontal port scanning detection mirai botnet",
@@ -161,7 +172,8 @@ class TrafficAnalyzer:
                         f"属于口令爆破或自动化扫描的典型形态（Mirai 类僵尸网络扫 Telnet 就是这样）。"
                     ),
                     src_ip=src, dst_ip=dst, dst_port=dport,
-                    metrics={"attempts": len(nos), "target": f"{dst}:{dport}", "scope": scope},
+                    metrics={"attempts": len(nos), "target": f"{dst}:{dport}", "scope": scope,
+                             "scope_rules": [_rule(src=src, dst=dst, dport=dport)]},
                     evidence=nos[:12],
                     knowledge_queries=[
                         "telnet brute force detection suricata threshold",
@@ -267,6 +279,8 @@ class TrafficAnalyzer:
                         "peer_list": [f"{ip}:{port}" for ip, port in sorted(peers)][:20],
                         "mean_interval": round(mean, 2), "cv": round(cv, 3),
                         "periodic": periodic, "scope": _scope_of([f for f, _ in items]),
+                        "scope_rules": [_rule(src=client, dst=ip, dport=port)
+                                        for ip, port in sorted(peers)][:20],
                     },
                     evidence=sorted({f.evidence[0] for f, _ in items if f.evidence})[:12],
                     knowledge_queries=[
@@ -288,6 +302,58 @@ class TrafficAnalyzer:
             if cur is None or f.metrics["connections"] > cur.metrics["connections"]:
                 best[key] = f
         return list(best.values())
+
+    def detect_fanout_attempts(
+        self, flows: list[Flow], min_hosts: int = 50, max_ports: int = 8,
+        max_packets: int = 6,
+    ) -> list[Finding]:
+        """扇出型尝试：一台主机对大量不同目标发起「短连接」，且集中在少数端口。
+
+        为什么现有规则抓不到（IoT-23 实测）：Hide-and-Seek 的感染主机发了 53 万条流，
+        目标是 23/2323/8080/9527 等端口上的成千上万个地址。但 `horizontal_scan`
+        只统计「发了 SYN 且没有数据」的连接——这类爆破/蠕虫连接**握手会完成**，
+        于是整批被排除，召回只有 1.6%。`repeated_attempts` 又要求同一目标 >= 20 次，
+        而扇出场景每个目标只试一两次。
+
+        判定：短连接（<= max_packets 个包）按 (源, 目的端口) 聚合，
+        覆盖 >= min_hosts 个不同目标、端口数 <= max_ports → 扇出告警。
+        """
+        by_src_port: dict[tuple[str, int], list[Flow]] = defaultdict(list)
+        for f in flows:
+            if f.packets > max_packets or not f.target_port:
+                continue
+            by_src_port[(f.initiator, f.target_port)].append(f)
+
+        findings: list[Finding] = []
+        for (src, port), items in by_src_port.items():
+            hosts = {f.responder for f in items}
+            if len(hosts) < min_hosts:
+                continue
+            findings.append(
+                Finding(
+                    id="", kind="fanout_attempts",
+                    severity="high" if len(hosts) >= 200 else "medium",
+                    title=f"{src} 对 {len(hosts)} 台主机发起短连接（端口 {port}）",
+                    detail=(
+                        f"{src} 在端口 {port} 上对 {len(hosts)} 个不同目标各发起不到 "
+                        f"{max_packets} 个包的短连接——这是蠕虫传播/Telnet-SSH 爆破扇出的形态"
+                        f"（Mirai 类僵尸网络就是这样铺开的）。它不是端口扫描（单一端口），"
+                        f"也不是普通服务访问（正常客户端不会在短时间内连上百个不同地址）。"
+                    ),
+                    src_ip=src, dst_ip="", dst_port=port,
+                    metrics={
+                        "hosts": len(hosts), "dport": port, "sessions": len(items),
+                        "scope_rules": [_rule(src=src, dport=port)],
+                    },
+                    evidence=sorted({f.evidence[0] for f in items if f.evidence})[:12],
+                    knowledge_queries=[
+                        "worm propagation horizontal fan out detection",
+                        "mirai telnet brute force detection",
+                        "T1110 brute force distributed targets",
+                    ],
+                )
+            )
+        return findings
 
     def detect_dns_volume(self, dns: list[dict], threshold: int = 5000) -> list[Finding]:
         """单主机 DNS 请求量异常：DGA / DNS 隧道 / 垃圾邮件投递的常见前置行为。
@@ -316,7 +382,8 @@ class TrafficAnalyzer:
                         f"（阈值 {threshold} 次）。感染主机做 DGA/隧道/邮件投递时会呈现这种量级；"
                         f"正常终端一小时的查询量通常是个位数到几十。"
                     ),
-                    metrics={"queries": len(rows), "distinct": len(names), "scope": scope},
+                    metrics={"queries": len(rows), "distinct": len(names), "scope": scope,
+                             "scope_rules": [_rule(src=src, dport=53)]},
                     evidence=[r["no"] for r in rows[:10]],
                     knowledge_queries=[
                         "dns tunneling detection volume threshold",
@@ -346,7 +413,8 @@ class TrafficAnalyzer:
                         f"（阈值 {min_targets} 个）。单台终端直接对外发信到这么多目标，"
                         f"更符合垃圾邮件僵尸而非正常邮件客户端（后者通常只连固定的中继）。"
                     ),
-                    metrics={"targets": len(targets)},
+                    metrics={"targets": len(targets),
+                             "scope_rules": [_rule(src=src, dport=25)]},
                     evidence=[],
                     knowledge_queries=[
                         "spambot smtp fanout detection",
@@ -612,6 +680,7 @@ class TrafficAnalyzer:
         findings: list[Finding] = []
         findings += self.detect_port_scan(flows)
         findings += self.detect_horizontal_scan(flows)
+        findings += self.detect_fanout_attempts(flows)
         findings += self.detect_repeated_attempts(packets)
         findings += self.detect_dns_tunnel(dns)
         findings += self.detect_dns_volume(dns)

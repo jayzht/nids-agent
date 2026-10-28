@@ -269,15 +269,46 @@ def parse_time(value: str) -> float:
     return 0.0
 
 
+# ---------------------------------------------------------------- 覆盖范围
+
+def rule_matches(flow: LabeledFlow, rule: dict) -> bool:
+    """检测器给出的覆盖规则是否命中这条流。
+
+    规则里的字段（`src / sport / dst / dport`）都可缺省，缺省 = 不限定。
+    告警涉及几十万条流时，一条 `{"src": "10.0.0.5", "dport": 23}` 比
+    逐个五元组既省内存又更快。
+    """
+    for key, value in rule.items():
+        if key == "src" and flow.src != value:
+            return False
+        if key == "dst" and flow.dst != value:
+            return False
+        if key == "sport" and flow.sport != int(value):
+            return False
+        if key == "dport" and flow.dport != int(value):
+            return False
+    return True
+
+
+def covered(flow: LabeledFlow, alerted: set[tuple[str, int, str, int]], rules: list[dict]) -> bool:
+    """一个流是否被任一告警覆盖：精确五元组（双向）或规则匹配。"""
+    if any(t in alerted for t in flow.tuple_both):
+        return True
+    return any(rule_matches(flow, r) for r in rules)
+
+
 # ---------------------------------------------------------------- 评测指标
 
 
-def flow_metrics(flows, alerted: set[tuple[str, int, str, int]]) -> dict[str, float | int]:
-    """流级混淆矩阵；告警与流任一方向五元组相同即算命中。"""
+def flow_metrics(
+    flows, alerted: set[tuple[str, int, str, int]], rules: list[dict] | None = None
+) -> dict[str, float | int]:
+    """流级混淆矩阵；精确五元组（双向）或覆盖规则命中即算检出。"""
+    rules = rules or []
     tp = fn = fp = tn = n = 0
     for f in flows:
         n += 1
-        hit = any(t in alerted for t in f.tuple_both)
+        hit = covered(f, alerted, rules)
         if f.malicious:
             tp += hit
             fn += not hit

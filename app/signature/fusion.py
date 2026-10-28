@@ -24,7 +24,7 @@ STAGE_LABEL = {
 
 BEHAVIOR_STAGE = {
     "port_scan": "recon", "horizontal_scan": "recon",
-    "repeated_attempts": "credential_attack",
+    "repeated_attempts": "credential_attack", "fanout_attempts": "credential_attack",
     "beacon": "c2", "beacon_payload": "c2", "irc_c2": "c2",
     "dns_tunnel": "exfil",
     "dns_volume": "c2", "smtp_fanout": "exfil",

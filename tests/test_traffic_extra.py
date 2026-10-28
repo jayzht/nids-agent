@@ -218,3 +218,45 @@ def test_irc_c2_collapses_symmetric_and_multi_client_noise():
     findings = a.detect_irc_c2(flows)
     assert len(findings) == 1, [f.title for f in findings]
     assert findings[0].src_ip == "10.0.0.7", "应保留连接数最多的被控端视角"
+
+
+def test_fanout_attempts_catches_completed_handshake_scan():
+    """握手会完成的爆破扇出（Mirai 形态）：horizontal_scan 会漏，这条必须抓到。"""
+    from app.traffic.analyzer import TrafficAnalyzer
+    from app.traffic.models import Flow
+
+    a = TrafficAnalyzer()
+
+    def f(dst, dport, packets=2, bytes_=120):
+        return Flow(
+            key=f"10.0.0.5|{dst}:{dport}", a_ip="10.0.0.5", a_port=40000,
+            b_ip=dst, b_port=dport, first_ts=0.0, last_ts=1.0,
+            initiator="10.0.0.5", responder=dst, target_port=dport,
+            packets=packets, bytes=bytes_, has_syn=True, has_psh=True,
+        )
+
+    flows = [f(f"45.1.{i // 250}.{i % 250}", 23) for i in range(120)]
+    findings = a.detect_fanout_attempts(flows, min_hosts=50)
+    assert len(findings) == 1
+    assert findings[0].metrics["hosts"] == 120
+    assert findings[0].metrics["scope_rules"] == [{"src": "10.0.0.5", "dport": 23}]
+
+
+def test_fanout_ignores_normal_browsing():
+    """正常上网：目标多但会话有大流量、且不止一个端口，不该报。"""
+    from app.traffic.analyzer import TrafficAnalyzer
+    from app.traffic.models import Flow
+
+    a = TrafficAnalyzer()
+
+    def f(dst, dport, packets):
+        return Flow(
+            key=f"10.0.0.9|{dst}:{dport}", a_ip="10.0.0.9", a_port=40000,
+            b_ip=dst, b_port=dport, first_ts=0.0, last_ts=1.0,
+            initiator="10.0.0.9", responder=dst, target_port=dport,
+            packets=packets, bytes=packets * 500, has_syn=True, has_psh=True,
+        )
+
+    flows = [f(f"93.184.216.{i % 250}", 443, 200) for i in range(120)]
+    flows += [f(f"1.2.3.{i % 250}", 80, 150) for i in range(120)]
+    assert a.detect_fanout_attempts(flows, min_hosts=50) == []

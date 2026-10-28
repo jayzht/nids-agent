@@ -76,8 +76,10 @@ def main() -> None:
     frame_tuple.update({p.no: (p.dst, p.dport, p.src, p.sport) for p in packets})
 
     alerted: set[tuple[str, int, str, int]] = set()
+    rules: list[dict] = []
     for f in analysis.findings:
         # 检测器自己知道命中了哪些流时，用 metrics.scope 精确给出五元组
+        rules.extend(f.metrics.get("scope_rules") or [])
         for item in (f.metrics.get("scope") or []):
             try:
                 src, sport, dst, dport = item[0], int(item[1]), item[2], int(item[3])
@@ -147,9 +149,9 @@ def main() -> None:
     if unknown:
         top = sorted(unknown.items(), key=lambda kv: -kv[1])[:5]
         print(f"⚠️ 未识别的标签（按正常处理）：{top}——需要的话用 --label-map 扩词表")
-    m = flow_metrics(kept_flows, alerted)
+    m = flow_metrics(kept_flows, alerted, rules)
 
-    print(f"\n行为 finding：{len(analysis.findings)} 条；命中流五元组 {len(alerted)} 个")
+    print(f"\n行为 finding：{len(analysis.findings)} 条；覆盖 {len(alerted)} 个五元组 + {len(rules)} 条规则")
     print(f"流级结果（场景 {args.scenario}）：流 {m['flows']}（恶意 {m['malicious']} / 正常 {m['benign']}）")
     print(f"  TP {m['tp']}  FN {m['fn']}  FP {m['fp']}  TN {m['tn']}")
     print(f"  recall {m['recall']:.3f} · FPR {m['false_positive_rate']:.4f} "
@@ -188,10 +190,29 @@ def main() -> None:
             "| 8 | Murlo（Qvod 播放器）| 268,428 | **0.947** | 0.0014 | 0.941 |",
             "| 3 | Rbot（SSH 传播 + IRC C2）| 72,115 | **0.983** | 0.0617 | 0.904 |",
             "| 12 | Sogou | 6,449 | 0.005 | 0.0000 | 1.000 |",
+            "| **IoT-23 1-1** | Hide-and-Seek（IoT，Telnet 扇出）| 1,008,748 | **1.000** | 0.0002 | 1.000 |",
+            "| CTU-Malware 409-2 | Hancitor（加密代理 C2）| 313 | 0.035 | 0.0000 | 1.000 |",
             "",
             "场景 12 几乎无召回，是**数据问题**而非检测问题：它的 pcap 只覆盖 2 分钟"
             "（08:41–08:43），而 binetflow 覆盖 10:32–11:31，两者不是同一时间窗，"
             "能对上的流只有 6 千条、且几乎没有恶意流落在里面。",
+            "",
+            "### 数据量一大，光有「证据」不够：覆盖规则",
+            "",
+            "IoT-23 的 Hide-and-Seek 场景有 **53 万条恶意流**，全部是感染主机对"
+            "23/2323/8080/9527 端口的扇出。第一版 recall 只有 **0.016**——两个原因：",
+            "",
+            "1. `horizontal_scan` 只看「发了 SYN 但没有数据」的连接，而这类爆破/蠕虫连接"
+            "**握手会完成**，整批被排除；`repeated_attempts` 又要求同一目标 >= 20 次，"
+            "而扇出场景每个目标只试一两次。→ 补了 `fanout_attempts`（短连接按"
+            "「源 + 目的端口」聚合，覆盖 >= 50 个不同目标即告警）。",
+            "2. 告警只带精确五元组的话，53 万条流根本装不下（`scope` 上限 5 万）。"
+            "所以给检测器加了 **`scope_rules`**：一条 `{\"src\": \"192.168.100.103\", "
+            "\"dport\": 23}` 就精确表达了「这台主机扫了这批主机的 23 端口」，"
+            "评测器按规则匹配——**从 O(流数) 的内存换成 O(规则数)**。",
+            "",
+            "改完：IoT-23 recall 0.016 → **1.000**（FPR 0.0002），"
+            "CTU-13 三个场景也顺带从 0.90/0.98/0.95 提到 **0.99/1.00/0.95**。",
             "",
             "### 从 0.000 到 0.983：两个改动",
             "",

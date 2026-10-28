@@ -63,6 +63,7 @@ BEHAVIOR_MAP: dict[str, list[str]] = {
     "port_scan": ["T1046", "T1595"],
     "horizontal_scan": ["T1046", "T1210"],
     "repeated_attempts": ["T1110.001"],
+    "fanout_attempts": ["T1110.001", "T1210"],
     "beacon": ["T1071", "T1573"],
     "irc_c2": ["T1071", "T1573"],
     "beacon_payload": ["T1071", "T1573"],
