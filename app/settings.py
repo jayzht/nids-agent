@@ -55,7 +55,15 @@ class Settings(BaseSettings):
     # sparse = 只用 BM25，不需要 embedding 服务（换云端 LLM 但没有 embedding 时用）
     retrieval_mode: str = "hybrid"  # hybrid | sparse
     rrf_k: int = 60                # RRF 平滑常数
-    rerank_mode: str = "none"      # none | lexical | llm
+    rerank_mode: str = "none"      # none | lexical | llm | http
+    # TEI / 任意兼容 rerank 服务：POST {query, texts} -> [{index, score}]
+    rerank_url: str = "http://127.0.0.1:8080/rerank"
+    # 本地 cross-encoder（sentence-transformers）
+    rerank_model_path: str = str(BASE_DIR / "data" / "models" / "bge-reranker-v2-m3")
+    rerank_max_length: int = 512
+    # 0 = 纯重排分；1 = 纯融合分。实测混合比纯重排稳（不会把原本第 1 的降下去）
+    rerank_blend: float = 0.5
+    rerank_timeout: float = 30.0
     # ATT&CK 映射模式：keyword（静态+关键词，默认）| semantic（加知识库语义兜底）
     attack_mapping_mode: str = "keyword"
     rerank_top_n: int = 12

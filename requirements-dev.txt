@@ -9,6 +9,10 @@ pypdf>=4.0
 # 生成样本流量
 scapy>=2.5
 
+# 重排（可选）：CPU 版 torch 请单独装，避免默认拉 CUDA 包
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+sentence-transformers>=3.0
+
 # 测试
 pytest>=8.0
 pytest-asyncio>=0.23

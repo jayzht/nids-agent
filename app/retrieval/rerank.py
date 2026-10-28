@@ -8,12 +8,85 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from app.core.text import tokenize
 from app.retrieval.index import Hit
 
 logger = logging.getLogger(__name__)
+
+
+_ce = None
+
+
+def _get_ce():
+    """延迟加载 cross-encoder（transformers 裸调用）。
+
+    不用 sentence-transformers 的 CrossEncoder：它会给部分模型自动套 prompt
+    （bge-reranker 的 config 里带 prompts 字段），实测会把排序搞反。
+    这里直接 tokenizer + AutoModelForSequenceClassification，分数就是原始 logit。
+    """
+    global _ce
+    if _ce is None:
+        import torch
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+        from app.settings import get_settings
+
+        path = get_settings().rerank_model_path
+        logger.info("loading cross-encoder from %s", path)
+        tok = AutoTokenizer.from_pretrained(path)
+        model = AutoModelForSequenceClassification.from_pretrained(path).eval()
+        torch.set_num_threads(max(1, (torch.get_num_threads() or 8)))
+        _ce = (tok, model)
+    return _ce
+
+
+def _score_pairs(query: str, docs: list[str], max_length: int, batch: int = 16) -> list[float]:
+    import torch
+
+    tok, model = _get_ce()
+    out: list[float] = []
+    with torch.inference_mode():
+        for i in range(0, len(docs), batch):
+            chunk = docs[i : i + batch]
+            enc = tok(
+                [query] * len(chunk), chunk, padding=True, truncation=True,
+                max_length=max_length, return_tensors="pt",
+            )
+            logits = model(**enc).logits.view(-1).float()
+            out.extend(logits.tolist())
+    return out
+
+
+async def local_rerank(query: str, hits: list[Hit], top_n: int) -> list[Hit]:
+    """本地 cross-encoder 重排（bge-reranker-v2-m3）。
+
+    交叉编码器把 query 和 doc 拼在一起打分，能区分「词面像」和「真的能回答」。
+    代价是逐对推理，所以只对候选池（candidate_k）做，不碰全库。
+    """
+    from app.settings import get_settings
+
+    s = get_settings()
+    scores = await asyncio.to_thread(
+        _score_pairs, query, [h.chunk.text for h in hits], s.rerank_max_length
+    )
+    base = [h.score for h in hits]
+
+    def norm(vals: list[float]) -> list[float]:
+        lo, hi = min(vals), max(vals)
+        span = hi - lo
+        return [0.5] * len(vals) if span < 1e-9 else [(v - lo) / span for v in vals]
+
+    alpha = max(0.0, min(1.0, s.rerank_blend))
+    nbase, nce = norm(base), norm([float(x) for x in scores])
+    for h, b, c in zip(hits, nbase, nce):
+        h.score = alpha * b + (1 - alpha) * c
+    ranked = sorted(hits, key=lambda h: h.score, reverse=True)[:top_n]
+    for i, h in enumerate(ranked):
+        h.rank = i + 1
+    return ranked
 
 
 def lexical_rerank(query: str, hits: list[Hit], top_n: int) -> list[Hit]:
@@ -79,7 +152,54 @@ async def llm_rerank(query: str, hits: list[Hit], top_n: int, model: str | None 
     return ranked
 
 
+async def http_rerank(
+    query: str, hits: list[Hit], top_n: int, url: str = "", timeout: float = 30.0
+) -> list[Hit]:
+    """调用 cross-encoder rerank 服务（TEI 兼容接口）。
+
+    TEI 的 /rerank 接收 {query, texts}，返回 [{index, score}]；
+    分数是 query-doc 的相关性 logits，比双塔余弦更能分辨「看起来像 vs 真的答得上」。
+    """
+    import httpx
+
+    from app.settings import get_settings
+
+    s = get_settings()
+    target = url or s.rerank_url
+    texts = [h.chunk.text for h in hits]
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(
+            target, json={"query": query, "texts": texts, "truncate": True, "raw_scores": False}
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    ranked = data if isinstance(data, list) else data.get("results", [])
+    order = {int(item["index"]): float(item["score"]) for item in ranked}
+    if not order:
+        raise RuntimeError("rerank 服务返回空结果")
+
+    for i, h in enumerate(hits):
+        h.score = order.get(i, -1e9)
+    picked = sorted(enumerate(hits), key=lambda pair: order.get(pair[0], -1e9), reverse=True)
+    result = [h for _, h in picked[:top_n]]
+    for i, h in enumerate(result):
+        h.rank = i + 1
+    return result
+
+
 async def rerank(query: str, hits: list[Hit], top_n: int, mode: str = "lexical") -> list[Hit]:
+    if mode == "local":
+        try:
+            return await local_rerank(query, hits, top_n)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("local rerank failed, fallback to lexical: %s", exc)
+            return lexical_rerank(query, hits, top_n)
+    if mode == "http":
+        try:
+            return await http_rerank(query, hits, top_n)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("http rerank failed, fallback to lexical: %s", exc)
+            return lexical_rerank(query, hits, top_n)
     if mode == "llm":
         try:
             return await llm_rerank(query, hits, top_n)

@@ -553,7 +553,7 @@ app/
 │   ├── bm25.py          手写 BM25（倒排表，只算含查询词的文档）
 │   ├── vectorstore.py   后端抽象：NumPy / Qdrant
 │   ├── index.py         ★ 混合检索 + 两种融合（RRF / 归一化）
-│   ├── rerank.py        规则重排 / LLM listwise 重排
+│   ├── rerank.py        规则 / LLM listwise / cross-encoder 三种重排
 │   └── service.py       跨库检索与融合
 ├── agent/
 │   ├── state.py         ★ TypedDict + reducer 的状态设计
@@ -710,7 +710,7 @@ make sweep                                 # 扫超参，选最优融合方式�
 |---|---|---|
 | 检查点在内存 | 重启后多轮记忆丢失 | 换 `SqliteSaver` / `PostgresSaver` |
 | 没有增量索引 | 改一篇文章要全量重建 | 用 chunk 指纹做 diff |
-| 重排默认关闭 | 规则重排在本数据集上略掉点（−0.03 nDCG） | `RERANK_MODE=lexical/llm` 可开；或接 cross-encoder |
+| 重排默认关闭 | 规则重排 −0.03 nDCG；**bge-reranker 实测 0.744（低于融合 0.835）** | `RERANK_MODE=local/http` 可开，见下方 A/B |
 | 无鉴权/多租户 | 单机 Demo | API Key + KB 级 ACL |
 | CPU 推理慢 | 25~40 秒/问 | 上 GPU、或 `LLM_FAST_MODEL` 用小模型做路由/打分 |
 | 评测集偏小 | 44 题（技术 28 + 领域 16） | 扩到 100+ 并按问题类型分桶 |
