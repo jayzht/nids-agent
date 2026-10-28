@@ -28,6 +28,7 @@ BEHAVIOR_STAGE = {
     "beacon": "c2", "beacon_payload": "c2",
     "dns_tunnel": "exfil",
     "cleartext_http": "c2", "suspicious_http": "c2",
+    "exploit_payload": "exploitation",
     "prompt_injection": "anomaly",
 }
 

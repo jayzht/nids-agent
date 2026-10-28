@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+import re
 import statistics
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -22,6 +23,21 @@ SUSPICIOUS_UA = (
     "msie 6.0", "python-requests/2.", "curl/7.", "wget/1.", "nikto", "sqlmap",
     "nmap", "masscan", "gobuster", "dirbuster", "zgrab", "nuclei",
 )
+
+# 常见「利用类」载荷特征：反序列化 / 表达式注入 / 目录穿越式 webshell 投递。
+# 不是给某个样本写死的规则，而是几大类的公开利用模式——单包攻击没有可统计的行为，
+# 只能靠载荷特征识别。
+PAYLOAD_SIGNATURES: list[tuple[str, str, str]] = [
+    (r"java\.beans\.XMLDecoder", "T1190", "XMLDecoder 反序列化（WebLogic/Jenkins 一类）"),
+    (r"<work:WorkContext|/wls-wsat/|/bea_wls_internal/", "T1190", "WebLogic WLS 工作区反序列化入口"),
+    (r"\$\{jndi:(ldap|rmi|dns|ldaps)://", "T1190", "JNDI 注入（Log4Shell 类）"),
+    (r"\$\{(\$\{.*\}\$\{|lower:|upper:)", "T1190", "Log4j 二次展开/绕过表达式"),
+    (r"O:\d{1,3}:\"", "T1190", "Java 序列化数据流魔术字节"),
+    (r"<\?xml[^>]*\?\s*<!ENTITY", "T1190", "XXE 外部实体声明"),
+    (r"%\{.*\}", "T1190", "OGNL 表达式注入（Struts2 一类）"),
+    (r"/console/login/LoginForm\.jsp|/console/css/%252e%252e", "T1190", "WebLogic 控制台路径穿越"),
+    (r"\bcmd(\.exe)?\b[\"']?\s*(/c|/k)\s", "T1059", "载荷内含命令行执行"),
+]
 
 
 def shannon_entropy(s: str) -> float:
@@ -267,6 +283,61 @@ class TrafficAnalyzer:
             )
         ]
 
+    def detect_exploit_payload(
+        self, http: list[dict], bodies: dict[int, str]
+    ) -> list[Finding]:
+        """载荷级检测：在 HTTP 请求体里找已知利用特征。
+
+        为什么需要它：单包漏洞利用（回放的小 pcap）既没有可统计的行为，
+        也可能不在 ET Open 的规则集里。抽到请求体后，就能用公开的利用模式
+        兜住一整类（反序列化、JNDI、OGNL、XXE），而不是给某个样本写死规则。
+
+        同一个请求体命中多个模式时合并成一条（否则一个 payload 会刷出好几条重复告警）。
+        """
+        if not bodies:
+            return []
+        by_no = {r["no"]: r for r in http}
+        findings: list[Finding] = []
+        for no, body in bodies.items():
+            hits = [
+                (pattern, technique, desc)
+                for pattern, technique, desc in PAYLOAD_SIGNATURES
+                if re.search(pattern, body, re.IGNORECASE)
+            ]
+            if not hits:
+                continue
+            req = by_no.get(no) or {}
+            uri = (req.get("uri") or "")[:120]
+            host = req.get("host") or "未知主机"
+            techniques = sorted({t for _, t, _ in hits})
+            descs = "、".join(d for _, _, d in hits)
+            findings.append(
+                Finding(
+                    id="", kind="exploit_payload", severity="high",
+                    title=f"HTTP 请求体含利用特征：{hits[0][2]}",
+                    detail=(
+                        f"第 {no} 号包的请求体命中 {len(hits)} 个公开利用特征片段"
+                        f"（{descs}），目标 {host}{uri}。"
+                        f"这类片段是公开利用链的固定组成（ATT&CK {', '.join(techniques)}），"
+                        f"正常业务请求不该出现。"
+                    ),
+                    metrics={
+                        "frame": no,
+                        "patterns": [p for p, _, _ in hits],
+                        "techniques": techniques,
+                        "body_bytes": len(body),
+                        "uri": uri,
+                    },
+                    evidence=[no],
+                    knowledge_queries=[
+                        f"{hits[0][2]} 检测规则",
+                        "sigma rule web exploit payload detection",
+                        f"suricata rule detect {techniques[0]}",
+                    ],
+                )
+            )
+        return findings
+
     def detect_suspicious_http(self, http: list[dict]) -> list[Finding]:
         findings: list[Finding] = []
         by_ua: dict[str, list[dict]] = defaultdict(list)
@@ -381,6 +452,8 @@ class TrafficAnalyzer:
         cleartext = pc.read_cleartext_http(path)
         findings += self.detect_cleartext_http(path)
         findings += self.detect_prompt_injection(http, cleartext, dns)
+        # 请求体只在有 HTTP 时才取（多一次 tshark 调用，走 JSON 输出）
+        findings += self.detect_exploit_payload(http, pc.read_http_bodies(path) if http else {})
         order = {"high": 0, "medium": 1, "low": 2}
         findings.sort(key=lambda f: order.get(f.severity, 3))
         for i, f in enumerate(findings, 1):

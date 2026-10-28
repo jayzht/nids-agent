@@ -71,3 +71,59 @@ def test_prompt_block_mentions_metrics():
     analysis = TrafficAnalyzer().analyze(FIX / "horizontal_scan.pcap")
     block = analysis.to_prompt_block()
     assert "关键指标" in block
+
+
+def test_exploit_payload_detects_deserialization_and_ignores_benign():
+    """载荷特征要能抓反序列化，又不能在正常请求上误报。"""
+    from app.traffic.analyzer import TrafficAnalyzer
+
+    a = TrafficAnalyzer()
+    http = [
+        {"no": 1, "method": "POST", "host": "10.0.0.5:7001",
+         "uri": "/wls-wsat/CoordinatorPortType11", "ua": "Mozilla/5.0"},
+        {"no": 2, "method": "POST", "host": "shop.example.com",
+         "uri": "/api/orders", "ua": "Mozilla/5.0"},
+    ]
+    bodies = {
+        1: '<soapenv:Envelope><work:WorkContext>java.beans.XMLDecoder</work:WorkContext></soapenv:Envelope>',
+        2: '{"item": "book", "qty": 2}',
+    }
+    findings = a.detect_exploit_payload(http, bodies)
+    assert findings, "反序列化载荷必须命中"
+    assert all(f.kind == "exploit_payload" and f.severity == "high" for f in findings)
+    assert all(f.metrics["frame"] == 1 for f in findings)
+    assert a.detect_exploit_payload(http, {}) == []
+
+
+def test_read_http_bodies_handles_multiline_payload(monkeypatch, tmp_path):
+    """body 里的换行会破坏 `-T fields` 的按行解析，所以必须走 JSON 输出。"""
+    import json
+
+    from app.traffic import pcap as pc
+
+    payload = (
+        '<soapenv:Envelope>\n<work:WorkContext>'
+        "java.beans.XMLDecoder</work:WorkContext>\n</soapenv:Envelope>"
+    )
+    canned = [
+        {
+            "_source": {"layers": {
+                "frame": {"frame.number": "4"},
+                "http": {"http.file_data": payload, "http.request.method": "POST"},
+            }},
+        },
+        # 没有 body 的请求（GET）应该被跳过
+        {"_source": {"layers": {"frame": {"frame.number": "5"}, "http": {"http.request": "1"}}}},
+    ]
+    monkeypatch.setattr(pc, "_run", lambda cmd: json.dumps(canned))
+    bodies = pc.read_http_bodies(tmp_path / "x.pcap")
+    assert bodies == {4: payload}, bodies
+    assert "\n" in bodies[4], "多行 body 必须完整保留（这正是 -T fields 会丢掉的部分）"
+
+
+def test_read_http_bodies_survives_broken_output(tmp_path, monkeypatch):
+    """tshark 输出坏掉时不能抛异常，只是没有载荷可查。"""
+    from app.traffic import pcap as pc
+
+    monkeypatch.setattr(pc, "_run", lambda cmd: "not json at all")
+    assert pc.read_http_bodies(tmp_path / "x.pcap") == {}

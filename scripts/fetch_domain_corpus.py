@@ -214,6 +214,10 @@ ARXIV_QUERIES = [
     'all:"encrypted traffic classification"',
     'all:"network traffic anomaly detection"',
     'all:"CICIDS"',
+    # 「心跳/周期通信」是 C2 检测的核心方法，但前四个查询覆盖不到方法论。
+    # 注意别用 all:"beaconing"：那个词在 arXiv 上基本被车联网/V2X 占用，全是误召回。
+    'all:"command and control" AND all:detection',
+    'all:"periodicity" AND all:botnet',
 ]
 
 ARXIV_API = "https://export.arxiv.org/api/query"

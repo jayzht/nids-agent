@@ -125,10 +125,20 @@ def render_doc(rows, hit, scored, controls, fp, behavior_hit) -> str:
         "",
         "## 漏检的为什么漏（能力边界）",
         "",
-        "| 漏检样本 | 包数 | 家族 | 原因 |",
-        "|---|---:|---|---|",
     ]
-    for r in [x for x in scored if not x["status"].startswith("✔")]:
+    misses = [x for x in scored if not x["status"].startswith("✔")]
+    if not misses:
+        lines += [
+            "本轮没有漏检：30 份样本全部产生告警。这不代表「检测能力足够」，",
+            "只代表**这 30 份样本**都被覆盖到了；换一批（尤其是加密 C2、内存马、",
+            "低速扫描）大概率会掉。真实评估需要带标注的大样本集，见文末「下一步」。",
+        ]
+    else:
+        lines += [
+            "| 漏检样本 | 包数 | 家族 | 原因 |",
+            "|---|---:|---|---|",
+        ]
+    for r in misses:
         reason = (
             "包数极少，没有可统计的行为模式；ET Open 也未覆盖该利用"
             if r["packets"] <= 100

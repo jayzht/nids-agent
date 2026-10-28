@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import struct
 import subprocess
@@ -153,6 +154,38 @@ def read_dns(path: Path) -> list[dict]:
                 "dst": dst,
             }
         )
+    return out
+
+
+def read_http_bodies(path: Path, limit: int = 60, max_bytes: int = 4096) -> dict[int, str]:
+    """按帧号取 HTTP 请求体（只读前 max_bytes，最多 limit 条）。
+
+    为什么单独走 `-T json`：`-T fields` 是按行解析的，而请求体里常有换行
+    （SOAP/XML 一换行，后面的字段就全部错位）。JSON 输出不受影响。
+    取不到就返回空 dict —— 载荷检测是加分项，不能让它拖垮整条链路。
+    """
+    cmd = [TSHARK, "-r", str(path), "-T", "json", "-Y", "http.request"]
+    if limit:
+        cmd += ["-c", str(limit)]
+    try:
+        rows = json.loads(_run(cmd) or "[]")
+    except Exception:  # noqa: BLE001
+        return {}
+    out: dict[int, str] = {}
+    for row in rows:
+        layers = (((row or {}).get("_source") or {}).get("layers") or {})
+        frame = layers.get("frame") or {}
+        body = (layers.get("http") or {}).get("http.file_data")
+        if isinstance(body, dict):          # 多段 body 时 tshark 给的是对象
+            body = " ".join(str(v) for v in body.values())
+        if not body:
+            continue
+        try:
+            no = int(frame.get("frame.number", 0))
+        except (TypeError, ValueError):
+            continue
+        text = str(body)
+        out[no] = text[:max_bytes]
     return out
 
 
