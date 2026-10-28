@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     min_chunk_tokens: int = 32
     # 生成时给前 N 个命中补上同文档前后相邻片段（跨页/跨节的问题需要上下文）
     context_neighbors: int = 1
-    context_neighbor_top: int = 3
+    context_neighbor_top: int = 1
     bm25_weight: float = 0.2       # 稠密/稀疏融合权重（用 scripts/sweep.py 定出来的）
     fusion: str = "normalized"     # rrf | normalized
     # sparse = 只用 BM25，不需要 embedding 服务（换云端 LLM 但没有 embedding 时用）
