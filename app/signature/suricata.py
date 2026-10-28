@@ -103,6 +103,9 @@ class SuricataRunner:
             self.image,
             "-r", f"/data/{rel}",
             "-S", f"/data/{self.rules_rel}",
+            # -k none：不校验 checksum。抓包/回放的样本经常带无效校验和，
+            # 开了校验会让大量规则不匹配——bluekeep 样本就是这样漏检的（关掉后立刻出 2 条告警）
+            "-k", "none",
             "-l", f"/data/{run_dir}",
         ]
         t0 = time.time()
