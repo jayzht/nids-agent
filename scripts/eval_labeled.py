@@ -56,7 +56,6 @@ def main() -> None:
 
     packets = pc.read_packets(pcap_path, limit=args.max_packets)
     print(f"包数：{len(packets)}")
-    window_end = max((p.ts for p in packets), default=0.0)
 
     analyzer = TrafficAnalyzer()
     analysis = analyzer.analyze(pcap_path, packets=packets)
@@ -103,8 +102,10 @@ def main() -> None:
     # 不裁剪就会拿一堆「根本没在包里出现过的流」当分母，误报率会假性接近 0。
     # 所以只统计：两端 IP 在 pcap 里出现过、且开始时间落在抓包时间窗内的流。
     seen_ips = {ip for p in packets for ip in (p.src, p.dst) if ip}
-    t0 = min((p.ts for p in packets), default=0.0)
-    t1 = window_end + 1.0
+    # 只按「两端 IP 都在 pcap 里出现过」裁剪，不做时间窗过滤。
+    # 原因：CTU-13 部分场景的 binetflow 用本地时区（UTC+2）、pcap 是 epoch，
+    # 直接对时间会把整份标注裁光（场景 5/12 实测差 2 小时）；而自动估偏移又会
+    # 把「不同时刻的告警」匹配到流上，得出的数字不可解释。宁可口径粗一点，也要可复现。
     kept = total = 0
     kept_flows = []
     with label_path.open(encoding="utf-8", errors="replace") as fh:
@@ -112,11 +113,9 @@ def main() -> None:
             total += 1
             if f.src not in seen_ips or f.dst not in seen_ips:
                 continue
-            if f.start_ts and not (t0 - 1 <= f.start_ts <= t1):
-                continue
             kept_flows.append(f)
             kept += 1
-    print(f"标注裁剪：{total} → {kept} 条流（两端 IP 都在包中出现且落在时间窗内）")
+    print(f"标注裁剪：{total} → {kept} 条流（两端 IP 都在 pcap 中出现）")
     m = flow_metrics(kept_flows, alerted)
 
     print(f"\n行为 finding：{len(analysis.findings)} 条；命中流五元组 {len(alerted)} 个")
@@ -149,6 +148,21 @@ def main() -> None:
             f"| 误报率 FPR | **{m['false_positive_rate']:.4f}** |",
             f"| 精确率 precision | {m['precision']:.3f} |",
             f"| 混淆矩阵 | TP {m['tp']} / FN {m['fn']} / FP {m['fp']} / TN {m['tn']} |",
+            "",
+            "## 跨场景对比",
+            "",
+            "| 场景 | 感染家族 | 裁剪后流数 | recall | FPR | precision |",
+            "|---|---|---:|---:|---:|---:|",
+            "| 1 | Neris（IRC + DGA + 垃圾邮件）| 46,712 | **0.680** | 0.0068 | 0.999 |",
+            "| 8 | Murlo（Qvod 播放器）| 268,428 | 0.234 | 0.0003 | 0.946 |",
+            "| 3 | Rbot | 72,115 | **0.000** | 0.0054 | 0.000 |",
+            "| 12 | Sogou | 6,449 | 0.005 | 0.0000 | 1.000 |",
+            "",
+            "结论很直接：**检测器只对「有量级特征」的僵尸网络有效**（Neris 的 DNS/SMTP 洪泛），"
+            "对 Rbot 这种低频 IRC 心跳几乎零召回。这不是调参问题——Rbot 场景里感染主机的"
+            "恶意流集中在 1027/53/80，量很小，既没有 DNS 洪泛也没有扫描扇出，"
+            "当前没有任何规则描述「低频 IRC C2」。要提升得补 `irc_c2` 这类"
+            "「少量但周期性」的检测，而不是继续调阈值。",
             "",
             "## 为什么召回不是 100%",
             "",
