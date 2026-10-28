@@ -708,7 +708,8 @@ make sweep                                 # 扫超参，选最优融合方式�
    把标题拼进 rerank 的 passage，MRR 0.865 → **0.895**。
 
 最终 **MRR +7%、nDCG +5%、hit@1 +9 个百分点**，`RERANK_BLEND=0.5` 最优。
-CPU 推理约 4.5s/查询，生产建议用 GPU 服务（`RERANK_MODE=http` 对接 TEI 兼容接口）。
+CPU 推理约 4~5s/次；多查询场景已改成「先合并候选、只重排一次」，端到端 12.0s。
+生产建议用 GPU 服务（`RERANK_MODE=http` 对接 TEI 兼容接口，`scripts/rerank_server.py` 可直接跑）。
 
 
 ---

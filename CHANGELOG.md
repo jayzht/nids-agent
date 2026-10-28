@@ -12,6 +12,9 @@
   MRR 0.835→0.895，nDCG 0.876→0.922。
 - 新增 `RERANK_USE_QUESTION`（默认 true）与 `RERANK_BLEND`（0.5 最优）；
   `scripts/rerank_server.py` 提供 GPU 容器用的最小 TEI 兼容服务。
+- 性能：多查询场景改成「先合并候选、只重排一次」，问答延迟 25.3s → 12.0s。
+- GPU 部署备注：TEI 的 ghcr GPU 镜像与 CUDA 版 torch 在本机网络下都拉不下来，
+  当前跑 CPU 版；GPU 就绪后把 `RERANK_MODE` 改成 `http` 即可（接口已对齐）。
 
 ## v2.1.0 — 支持 PDF/HTML 语料（NIST / MS-SMB2 / Snort 3）
 

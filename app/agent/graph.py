@@ -219,8 +219,9 @@ class RAGAgent:
         best: dict[str, tuple[Any, str]] = {}
 
         for q in queries:
+            # 逐查询检索时先不重排：多查询会重复付出 rerank 成本
             hits = await self.retriever.search(
-                q, kbs=kbs, k=self.settings.candidate_k, prefixes=prefixes
+                q, kbs=kbs, k=self.settings.candidate_k, prefixes=prefixes, skip_rerank=True
             )
             for h in hits:
                 cid = h.chunk.chunk_id
@@ -228,6 +229,16 @@ class RAGAgent:
                     best[cid] = (h, q)
 
         ranked = sorted(best.values(), key=lambda x: x[0].score, reverse=True)[: self.settings.candidate_k]
+
+        if self.settings.rerank_mode != "none":
+            from app.retrieval.rerank import rerank as do_rerank
+
+            top_n = min(self.settings.candidate_k, 12)
+            reranked = await do_rerank(
+                state["question"], [h for h, _ in ranked], top_n, mode=self.settings.rerank_mode
+            )
+            ranked = [(h, state["question"]) for h in reranked]
+
         candidates = []
         for h, q in ranked:
             item = h.to_public()
