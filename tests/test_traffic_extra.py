@@ -279,3 +279,39 @@ def test_read_tls_clients_extracts_ja3_and_sni():
     keys = {"no", "ts", "src", "dst", "sport", "dport", "sni", "ja3", "ja3_full"}
     assert keys <= set(rows[0])
     assert any(r["ja3"] for r in rows), "至少要有一半以上能算出 JA3"
+
+
+def _tls(no, src, sport, dst, dport, ts, sni="", ja3="abc"):
+    return {"no": no, "ts": ts, "src": src, "sport": sport, "dst": dst,
+            "dport": dport, "sni": sni, "ja3": ja3, "ja3_full": ""}
+
+
+def test_tls_c2_flags_no_sni_periodic_beacon():
+    """自建样本的形态：无 SNI + 抖动心跳 → 必须命中。"""
+    from app.traffic.analyzer import TrafficAnalyzer
+
+    clients = [_tls(i, "10.0.0.2", 40000 + i, "1.2.3.4", 8443, 100 + 5 * i + (i % 2))
+               for i in range(6)]
+    findings = TrafficAnalyzer().detect_tls_c2(clients)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.kind == "tls_c2" and f.metrics["no_sni"] == 6
+    assert f.metrics["periodic"] is True
+    assert len(f.metrics["scope"]) == 6
+
+
+def test_tls_c2_ignores_rdp_with_ip_sni():
+    """误报回归：正常 RDP 在 3389 上跑 TLS、握手规律、SNI 是裸 IP，不能报。"""
+    from app.traffic.analyzer import TrafficAnalyzer
+
+    clients = [_tls(i, "192.168.11.119", 50000 + i, "192.168.11.147", 3389,
+                    100 + 4.9 * i, sni="192.168.11.147") for i in range(3)]
+    assert TrafficAnalyzer().detect_tls_c2(clients) == []
+
+
+def test_tls_c2_ignores_normal_https_with_sni():
+    from app.traffic.analyzer import TrafficAnalyzer
+
+    clients = [_tls(i, "10.0.0.3", 41000 + i, "93.184.216.34", 443,
+                    100 + 1.5 * i, sni="example.com") for i in range(4)]
+    assert TrafficAnalyzer().detect_tls_c2(clients) == []

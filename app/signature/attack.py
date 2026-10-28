@@ -66,6 +66,7 @@ BEHAVIOR_MAP: dict[str, list[str]] = {
     "fanout_attempts": ["T1110.001", "T1210"],
     "beacon": ["T1071", "T1573"],
     "irc_c2": ["T1071", "T1573"],
+    "tls_c2": ["T1071.001", "T1573"],
     "beacon_payload": ["T1071", "T1573"],
     "dns_tunnel": ["T1071.004", "T1048.003"],
     # 只引用字典里确实有的技术编号（测试会校验映射目标存在）

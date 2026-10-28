@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import re
+import socket
 import statistics
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -21,6 +22,9 @@ _HTTP_PORTS = {80, 8000, 8080, 8081, 8888, 3128, 8008}
 
 # IRC 及其常见变体端口：僵尸网络最经典的 C2 通道（Rbot、Neris、Mirai 变种都用过）
 IRC_PORTS = {6667, 6668, 6669, 7000}
+
+# 常见 TLS 服务端口：出现在其它端口上的 TLS 更像隧道/隐蔽通道
+TLS_STD_PORTS = {443, 8443, 993, 995, 465, 587, 636, 853, 8883}
 
 _SCOPE_CAP = 50000
 
@@ -219,6 +223,99 @@ class TrafficAnalyzer:
                     knowledge_queries=[
                         "DNS tunneling detection suricata dns_query",
                         "Zeek dns.log query fields entropy",
+                    ],
+                )
+            )
+        return findings
+
+    def detect_tls_c2(self, clients: list[dict]) -> list[Finding]:
+        """TLS 侧的 C2 迹象：无 SNI / 裸 IP SNI / 非标准端口 / 抖动容忍的周期心跳。
+
+        为什么用「信号打分」而不是单一规则：加密 C2 与正常 HTTPS 在流量层面
+        几乎无法区分，但几个弱信号叠加起来很有判别力——
+        - ClientHello **不带 SNI**（正常客户端不会省，CDN 和多站点托管更不会）；
+        - SNI 直接是裸 IP（证书校验基本没法过，只有自签/不校验的植入物会这么干）；
+        - TLS 出现在非标准端口上（8443 之外的自定义端口）；
+        - 连接呈现**抖动容忍的周期性**（cv <= 0.6、平均间隔 >= 2s）。
+
+        单个信号不足以定性（比如内网扫描器也会无 SNI），所以要求**至少一个强信号**
+        （无 SNI >= 3 次）且累计 >= 2 分。踩过的坑：只用「非标准端口 + 周期性」两条
+        弱信号，正常 RDP（3389 上跑 TLS、握手很规律）会被误报；把「裸 IP SNI」当强信号
+        也一样——按 IP 直连的服务都发 IP SNI。
+        """
+        def _is_ip(host: str) -> bool:
+            try:
+                socket.inet_aton(host)
+                return host.count(".") == 3
+            except OSError:
+                return False
+
+        by_src: dict[str, list[dict]] = defaultdict(list)
+        for c in clients:
+            by_src[c["src"]].append(c)
+
+        findings: list[Finding] = []
+        for src, items in by_src.items():
+            no_sni = [c for c in items if not c["sni"]]
+            ip_sni = [c for c in items if c["sni"] and _is_ip(c["sni"])]
+            odd_port = [c for c in items if c["dport"] not in TLS_STD_PORTS]
+
+            times = sorted(c["ts"] for c in items if c["ts"])
+            gaps = [b - a for a, b in zip(times, times[1:])]
+            mean = statistics.fmean(gaps) if gaps else 0.0
+            cv = statistics.pstdev(gaps) / mean if gaps and mean > 0 else 9.9
+            periodic = len(gaps) >= 3 and mean >= 2 and cv <= 0.6
+
+            score = 0
+            reasons: list[str] = []
+            strong = False          # 必须有「强信号」才允许定性
+            if len(no_sni) >= 3:
+                score += 2
+                strong = True
+                reasons.append(f"{len(no_sni)} 次 ClientHello 不带 SNI")
+            if ip_sni:
+                # 裸 IP SNI 只算弱信号：按 IP 直连的服务（RDP、内网 HTTPS）都会发 IP SNI，
+                # 正常 RDP 样本就是这样被误报过一次。
+                score += 1
+                reasons.append(f"SNI 是裸 IP（{ip_sni[0]['sni']}）")
+            if len(odd_port) >= 2:
+                score += 1
+                reasons.append(f"{len(odd_port)} 次 TLS 落在非标准端口")
+            if periodic:
+                score += 1
+                reasons.append(f"周期心跳（平均 {mean:.1f}s，cv {cv:.2f}）")
+            # 弱信号（非标准端口 + 周期性）单独不足以定性：
+            # 正常 RDP 走 TLS 的样本就是这样——3389 端口 + 3 次规律握手，
+            # 但它每次都带 SNI。所以要求至少命中一个强信号。
+            if score < 2 or not strong:
+                continue
+
+            peers = sorted({f"{c['dst']}:{c['dport']}" for c in items})
+            findings.append(
+                Finding(
+                    id="", kind="tls_c2",
+                    severity="high" if score >= 3 else "medium",
+                    title=f"{src} 的 TLS 连接存在 C2 迹象（{', '.join(peers[:2])}）",
+                    detail=(
+                        f"{src} 发起 {len(items)} 次 TLS 连接，命中 {score} 分可疑信号："
+                        + "；".join(reasons)
+                        + "。这些信号单独看都可能是误报（内网扫描器也会不带 SNI），"
+                        "但叠加后与「自签证书 + 免域名 + 定时回连」的植入物高度一致。"
+                    ),
+                    src_ip=src,
+                    dst_ip=items[0]["dst"], dst_port=items[0]["dport"],
+                    metrics={
+                        "tls_sessions": len(items), "no_sni": len(no_sni),
+                        "ip_sni": len(ip_sni), "odd_port": len(odd_port),
+                        "periodic": periodic, "score": score,
+                        "ja3": sorted({c["ja3"] for c in items if c["ja3"]})[:5],
+                        "scope": [[c["src"], c["sport"], c["dst"], c["dport"]] for c in items],
+                    },
+                    evidence=[c["no"] for c in items][:12],
+                    knowledge_queries=[
+                        "ja3 fingerprint detect malicious tls c2",
+                        "TLS client hello without SNI detection",
+                        "T1573 encrypted channel detection beaconing",
                     ],
                 )
             )
@@ -687,6 +784,8 @@ class TrafficAnalyzer:
         findings += self.detect_smtp_fanout(flows)
         findings += self.detect_beacon(flows, packets)
         findings += self.detect_irc_c2(flows)
+        if sni:      # 有 TLS 才读 ClientHello 清单
+            findings += self.detect_tls_c2(pc.read_tls_clients(path))
         findings += self.detect_suspicious_http(http)
         cleartext = pc.read_cleartext_http(path)
         findings += self.detect_cleartext_http(path)
