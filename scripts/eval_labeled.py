@@ -26,18 +26,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.eval.labeled import flow_metrics, iter_binetflow  # noqa: E402
+from app.eval.formats import flow_metrics, load_flows  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.traffic import pcap as pc  # noqa: E402
 from app.traffic.analyzer import TrafficAnalyzer  # noqa: E402
 
+# 标注文件的候选后缀：不同数据集的命名不同，按这个顺序找
+LABEL_SUFFIXES = ("*.binetflow", "*.labeled", "*conn*log*", "*.csv")
+
 
 def find_files(scenario_dir: Path) -> tuple[Path, Path]:
-    pcaps = sorted(scenario_dir.glob("*.pcap"))
-    flows = sorted(scenario_dir.glob("*.binetflow"))
-    if not pcaps or not flows:
-        raise SystemExit(f"{scenario_dir} 里缺 pcap 或 binetflow（先用 fetch_ctu13.py 下载）")
-    return pcaps[0], flows[0]
+    """pcap + 标注文件：不假设标注叫 .binetflow，IoT-23 就是 Zeek conn 日志。"""
+    pcaps = sorted(scenario_dir.glob("*.pcap")) + sorted(scenario_dir.rglob("*.pcap"))
+    label = None
+    for pattern in LABEL_SUFFIXES:
+        hits = sorted(scenario_dir.glob(pattern)) or sorted(scenario_dir.rglob(pattern))
+        if hits:
+            label = hits[0]
+            break
+    if not pcaps or label is None:
+        raise SystemExit(f"{scenario_dir} 里缺 pcap 或标注文件（先用 fetch_*.py 下载）")
+    return pcaps[0], label
 
 
 def main() -> None:
@@ -48,6 +57,10 @@ def main() -> None:
                     help="只分析前 N 个包（大文件快速试跑）")
     ap.add_argument("--with-signature", action="store_true", help="同时统计 Suricata 告警")
     ap.add_argument("--write-doc", action="store_true")
+    ap.add_argument("--format", default=None,
+                    help="binetflow | zeek_conn | csv（默认按文件头自动识别）")
+    ap.add_argument("--columns", default="",
+                    help="CSV 列名映射，如 src=SrcAddr,sport=Sport,dst=DstAddr,dport=Dport")
     args = ap.parse_args()
 
     scenario_dir = ROOT / args.dir / args.scenario
@@ -106,16 +119,34 @@ def main() -> None:
     # 原因：CTU-13 部分场景的 binetflow 用本地时区（UTC+2）、pcap 是 epoch，
     # 直接对时间会把整份标注裁光（场景 5/12 实测差 2 小时）；而自动估偏移又会
     # 把「不同时刻的告警」匹配到流上，得出的数字不可解释。宁可口径粗一点，也要可复现。
+    columns = dict(
+        item.split("=", 1) for item in args.columns.split(",") if "=" in item
+    )
+    fmt, flows = load_flows(label_path, fmt=args.format, columns=columns or None)
+    print(f"标注文件：{label_path.name}（格式 {fmt}）")
+
     kept = total = 0
     kept_flows = []
-    with label_path.open(encoding="utf-8", errors="replace") as fh:
-        for f in iter_binetflow(fh):
-            total += 1
-            if f.src not in seen_ips or f.dst not in seen_ips:
-                continue
-            kept_flows.append(f)
-            kept += 1
+    labels: dict[str, int] = {}
+    unknown: dict[str, int] = {}
+    for f in flows:
+        total += 1
+        labels["恶意" if f.malicious else "正常"] = labels.get("恶意" if f.malicious else "正常", 0) + 1
+        if not f.malicious:
+            low = f.label.strip().lower()
+            if not any(tok in low for tok in ("benign", "background", "normal", "-", "")):
+                unknown[f.label] = unknown.get(f.label, 0) + 1
+        if f.src not in seen_ips or f.dst not in seen_ips:
+            continue
+        kept_flows.append(f)
+        kept += 1
     print(f"标注裁剪：{total} → {kept} 条流（两端 IP 都在 pcap 中出现）")
+    if total:
+        dist = " · ".join(f"{k} {v}（{v / total:.1%}）" for k, v in sorted(labels.items()))
+        print(f"标签分布：{dist}")
+    if unknown:
+        top = sorted(unknown.items(), key=lambda kv: -kv[1])[:5]
+        print(f"⚠️ 未识别的标签（按正常处理）：{top}——需要的话用 --label-map 扩词表")
     m = flow_metrics(kept_flows, alerted)
 
     print(f"\n行为 finding：{len(analysis.findings)} 条；命中流五元组 {len(alerted)} 个")

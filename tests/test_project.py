@@ -84,3 +84,16 @@ def test_binetflow_parse_and_flow_metrics():
     # 命中正常流算误报
     m2 = flow_metrics(flows, {("147.32.84.160", 53, "8.8.8.8", 53)})
     assert m2["fp"] == 1 and m2["false_positive_rate"] == 1.0
+
+
+def test_iot23_real_file_detected_as_zeek_conn():
+    """真实 IoT-23 标注文件存在时应被自动识别为 Zeek conn（不存在则跳过）。"""
+    import pytest
+
+    from app.eval.formats import detect_format
+
+    path = Path("data/labeled/IoT-23-Dataset-v2/CTU-IoT-Malware-Capture-1-1")
+    files = list(path.glob("*.labeled")) if path.exists() else []
+    if not files:
+        pytest.skip("未下载 IoT-23 样本")
+    assert detect_format(files[0]) == "zeek_conn"

@@ -32,6 +32,24 @@ def log(msg: str) -> None:
     print(msg, flush=True)
 
 
+def _get(url: str, timeout: str = "120") -> str:
+    """带重定向跟随与重试的 GET。
+
+    踩过：这个站偶发返回 301/空响应（同一个 URL 有时 200、有时只剩 196 字节），
+    不加 -L 就会误判成「目录里没文件」。
+    """
+    import subprocess
+
+    for _ in range(3):
+        out = subprocess.run(
+            ["curl", "-sSL", "--max-time", timeout, "--retry", "2", url],
+            capture_output=True, text=True,
+        ).stdout
+        if out and len(out) > 400:
+            return out
+    return out
+
+
 def curl(url: str, out: Path | None = None, head: bool = False) -> str:
     import subprocess
 
@@ -71,44 +89,55 @@ def list_captures(limit: int) -> list[str]:
     return ids[:limit]
 
 
-def fetch(capture_id: str) -> Path | None:
-    name = f"CTU-Malware-Capture-Botnet-{capture_id}"
-    out_dir = ROOT / "data" / "labeled" / "ctu-botnet" / capture_id
+def fetch(capture_id: str, base: str = "CTU-Malware-Capture-Botnet") -> Path | None:
+    # CTU 家族的目录名要拼前缀；IoT-23 的子目录本身就是完整名字
+    # 已经是完整目录名（CTU-13 / IoT-23 的子目录都以 CTU- 开头）就直接用
+    full = capture_id.startswith(("CTU-", base))
+    name = capture_id if full else f"{base}-{capture_id}"
+    # 目录相对路径：CTU 家族的 name 自带 base 前缀；IoT-23 的 name 是 CTU-xxx，要补 base/
+    rel = name if name.startswith(base) else f"{base}/{name}"
+    out_dir = ROOT / "data" / "labeled" / base / name
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    import subprocess
 
-    html = subprocess.run(
-        ["curl", "-sS", "--max-time", "120", f"{BASE}/{name}/"],
-        capture_output=True, text=True,
-    ).stdout
-    files = [h for h in re.findall(r'href="([^"?][^"]*)"', html) if h.endswith((".pcap", ".binetflow"))]
+    html = _get(f"{BASE}/{rel}/")
+    files = [
+        h for h in re.findall(r'href="([^"?][^"]*)"', html)
+        if h.endswith((".pcap", ".binetflow", "-labeled", ".labeled"))
+    ]
+    # IoT-23 把 pcap 放在 pcap/ 子目录、标注在根目录或 zeek-labeled/
+    if not any(f.endswith(".pcap") for f in files):
+        for sub in ("pcap/", "zeek-labeled/"):
+            sub_html = _get(f"{BASE}/{rel}/{sub}")
+            files += [
+                sub + h for h in re.findall(r'href="([^"?][^"]*)"', sub_html)
+                if h.endswith((".pcap", "-labeled", ".labeled"))
+            ]
     if not files:
         log(f"  !! {capture_id} 目录里没有 pcap/binetflow")
         return None
 
-    readme = subprocess.run(
-        ["curl", "-sS", "--max-time", "60", f"{BASE}/{name}/README.md"],
-        capture_output=True, text=True,
-    ).stdout
+    readme = _get(f"{BASE}/{rel}/README.md", timeout="60")
     m = re.search(r"Probable Name:\s*(.+)", readme)
     family = m.group(1).strip() if m else "未知"
 
     for f in files:
-        target = out_dir / f
-        mb = size_mb(f"{BASE}/{name}/{f}")
+        target = out_dir / Path(f).name
+        mb = size_mb(f"{BASE}/{rel}/{f}")
         if target.exists() and target.stat().st_size > 0:
             log(f"  已存在 {f}（{target.stat().st_size / 1048576:.1f}MB）")
             continue
         log(f"  下载 {f}（{mb:.1f}MB）…")
-        curl(f"{BASE}/{name}/{f}", target)
-    log(f"  完成：{capture_id} = {family} → {out_dir.relative_to(ROOT)}")
+        curl(f"{BASE}/{rel}/{f}", target)
+    log(f"  完成：{rel} = {family} → {out_dir.relative_to(ROOT)}")
     return out_dir
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ids", default="", help="逗号分隔，如 409-2,267-1")
+    ap.add_argument("--base", default="CTU-Malware-Capture-Botnet",
+                    help="数据集目录名（如 IoT-23-Dataset-v2），id 即其下的子目录")
     ap.add_argument("--list", type=int, default=0, help="列出前 N 个抓包 id")
     args = ap.parse_args()
 
@@ -123,7 +152,7 @@ def main() -> None:
     from app.eval.labeled import iter_binetflow
 
     for cid in [s.strip() for s in args.ids.split(",") if s.strip()]:
-        out = fetch(cid)
+        out = fetch(cid, base=args.base)
         if not out:
             continue
         labels: dict[str, int] = {}

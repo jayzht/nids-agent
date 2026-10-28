@@ -906,6 +906,27 @@ query 和这一段的字面语义，会丢掉「这个片段来自多强的文�
 （同模型同维度，索引不用重建），就能在零本地进程的前提下拿到 hybrid 的召回，
 详见 [4. 云后端](#4-云后端deepseek本地只留-embedding)。
 
+### 数据集接入：一种格式写一次，一个数据集零次
+
+一开始我把 binetflow 的解析直接写进评测脚本，于是「每上一个新数据集就要改评测代码」——
+这是个设计错误。现在分三层：
+
+```
+任意数据集 ──▶ 格式转换器 ──▶ 规范化流 {src, sport, dst, dport, label} ──▶ 评测器
+               （按格式实现）        （唯一契约）                    （永远不改）
+```
+
+- **转换器按格式算，不按数据集**：一个 `binetflow` 转换器同时覆盖 CTU-13 和
+  411 个 CTU-Malware-Capture 抓包；一个 `zeek_conn` 转换器覆盖 IoT-23 的 23 个场景；
+  另有通用 `csv` 转换器（`--columns` 给列名映射），覆盖一类「有标注但没固定格式」的数据集。
+- **格式自动识别**：看文件头（`#separator/#fields` → Zeek、`StartTime,` → binetflow、其余 CSV），
+  不需要人工指定。
+- **标签归一**：`flow=From-Botnet-V42-TCP`、`C&C-HeartBeat`、`Malicious`、`1`
+  都映射成「恶意/正常」；词表覆盖不到会打印「未识别标签」提示，而不是静默算错。
+
+实测代价：接 IoT-23（Zeek conn 日志 + pcap）时，**评测脚本一行没改**，
+只加了下载参数（`--base IoT-23-Dataset-v2`）。
+
 ### 数据集选型：为什么不是 CICIDS2017
 
 CICIDS2017 是「大家都在用」的那个，但它有公开的质量问题：
@@ -922,6 +943,10 @@ Engelen et al. 在 [Troubleshooting an Intrusion Detection Dataset: the CICIDS20
 | **CTU-Malware-Capture-Botnet-\*** | 411 个独立抓包，pcap 10~200MB | 同样是 binetflow | **零改动**，但实测**大部分抓包的 Label 列是空的**（110-1/157-1/267-1 都空，409-2 正常） |
 | **IoT-23 v2** | 23 场景，pcap ~140MB + Zeek conn 日志 | `*-zeek-conn-log.labeled`，逐流 `label` 字段 | 要写个小适配器（TSV + `#fields` 表头），约 40 行 |
 | UNSW-NB15 / NSL-KDD | 纯 flow CSV | 有 | 不适合：**没有 pcap**，我们的链路是包级的 |
+
+已试跑 IoT-23（`CTU-IoT-Malware-Capture-1-1`，Hide-and-Seek，146MB，100 万条流）：
+**recall 0.016 / FPR 0.0002 / precision 0.991**。IoT 僵尸网络的 C2 是低速率、加密、
+量级也不大，我们的「量级/周期」类检测器几乎抓不到——和 Hancitor 的结论一致。
 
 已试跑 Hancitor（`CTU-Malware-Capture-Botnet-409-2`，2021 年，20MB，4965 条流）：
 **recall 0.035 / FPR 0.000**——行为检测器一条都没响，只有 Suricata 的 3 条规则命中。
