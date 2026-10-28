@@ -260,3 +260,22 @@ def test_fanout_ignores_normal_browsing():
     flows = [f(f"93.184.216.{i % 250}", 443, 200) for i in range(120)]
     flows += [f(f"1.2.3.{i % 250}", 80, 150) for i in range(120)]
     assert a.detect_fanout_attempts(flows, min_hosts=50) == []
+
+
+def test_read_tls_clients_extracts_ja3_and_sni():
+    """TLS 清单抽取：JA3/SNI/端口字段要能取到（无真实样本时跳过）。"""
+    from pathlib import Path
+
+    import pytest
+
+    from app.traffic.pcap import read_tls_clients
+
+    pcap = Path("data/labeled/ctu13/1/botnet-capture-20110810-neris.pcap")
+    if not pcap.exists():
+        pytest.skip("未下载 CTU-13 场景 1")
+    rows = read_tls_clients(pcap)
+    if not rows:
+        pytest.skip("该样本里没有 ClientHello")
+    keys = {"no", "ts", "src", "dst", "sport", "dport", "sni", "ja3", "ja3_full"}
+    assert keys <= set(rows[0])
+    assert any(r["ja3"] for r in rows), "至少要有一半以上能算出 JA3"

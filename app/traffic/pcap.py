@@ -214,6 +214,42 @@ def read_http(path: Path) -> list[dict]:
     return out
 
 
+TLS_CLIENT_FIELDS = [
+    "frame.number", "frame.time_epoch",
+    "ip.src", "ip.dst", "tcp.srcport", "tcp.dstport",
+    "tls.handshake.extensions_server_name",
+    "tls.handshake.ja3", "tls.handshake.ja3_full",
+]
+
+
+def read_tls_clients(path: Path, limit: int | None = None) -> list[dict]:
+    """TLS ClientHello 清单：JA3 / SNI / 目的端口。
+
+    先抽数据、后写规则：TLS 类检测（JA3 指纹、无 SNI、裸 IP SNI）能不能做，
+    取决于手上有多少带标注的加密 C2 样本。当前 CTU-13/IoT-23 里几乎没有 TLS，
+    所以这里只提供抽取能力，检测规则等有可验证的数据再加（见 README）。
+    """
+    if not TSHARK:
+        raise TsharkUnavailable("未安装 tshark（apt install tshark）")
+    rows = read_fields(path, TLS_CLIENT_FIELDS, display_filter="tls.handshake.type==1", limit=limit)
+    out: list[dict] = []
+    for no, ts, src, dst, sport, dport, sni, ja3, ja3_full in rows:
+        out.append(
+            {
+                "no": _int_or_zero(no),
+                "ts": float(ts or 0.0),
+                "src": src,
+                "dst": dst,
+                "sport": _int_or_zero(sport),
+                "dport": _int_or_zero(dport),
+                "sni": sni,
+                "ja3": ja3,
+                "ja3_full": ja3_full,
+            }
+        )
+    return out
+
+
 def read_tls_sni(path: Path) -> list[dict]:
     try:
         rows = read_fields(path, TLS_FIELDS, display_filter="tls.handshake.type==1")
