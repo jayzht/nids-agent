@@ -1,19 +1,17 @@
 # Changelog
 
-## v2.2.0 — cross-encoder 重排接入（负结果）
+## v2.2.0 — cross-encoder 重排接入（先负后正）
 
 - 新增 `RERANK_MODE=local`：bge-reranker-v2-m3（2.27GB）+ transformers 裸打分，
   支持 `RERANK_BLEND` 把融合分与重排分归一化后混合。
 - 也支持 `RERANK_MODE=http`（TEI 兼容 `/rerank` 接口），便于换成 GPU 服务。
-- **A/B 结果（ids 22 题，candidate_k=20）**：
-  | 模式 | recall@6 | MRR | nDCG@6 |
-  |---|---:|---:|---:|
-  | none（融合） | 1.000 | **0.835** | **0.876** |
-  | local 纯重排 | 1.000 | 0.744 | 0.809 |
-  | local 混合 0.5 | 1.000 | 0.792 | 0.845 |
-- 结论：**这套语料上重排没有收益**，默认仍是 `none`。
-  抽查显示重排能救回难查询（rank 5→1、3→1），但会把原本排第一的降下去，净效果为负。
-  纯 CPU 推理约 12s/查询，也没有生产可用性（GPU 版 TEI 镜像拉取失败）。
+- **第一版是负结果**（MRR 0.744），排查后修正两处输入：
+  1. 用「原始中文问题」做重排而不是英文改写式（0.744 → 0.865）
+  2. rerank 的 passage 拼上 heading_path（0.865 → 0.895）
+- **最终 A/B（ids 22 题，candidate_k=20，blend=0.5）**：hit@1 0.727→0.818，
+  MRR 0.835→0.895，nDCG 0.876→0.922。
+- 新增 `RERANK_USE_QUESTION`（默认 true）与 `RERANK_BLEND`（0.5 最优）；
+  `scripts/rerank_server.py` 提供 GPU 容器用的最小 TEI 兼容服务。
 
 ## v2.1.0 — 支持 PDF/HTML 语料（NIST / MS-SMB2 / Snort 3）
 

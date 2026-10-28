@@ -69,9 +69,12 @@ async def local_rerank(query: str, hits: list[Hit], top_n: int) -> list[Hit]:
     from app.settings import get_settings
 
     s = get_settings()
-    scores = await asyncio.to_thread(
-        _score_pairs, query, [h.chunk.text for h in hits], s.rerank_max_length
-    )
+    # 片段标题（heading_path）里常有 API 名/参数名，对 cross-encoder 是强信号
+    passages = [
+        f"{h.chunk.heading_path}\n{h.chunk.text}" if h.chunk.heading_path else h.chunk.text
+        for h in hits
+    ]
+    scores = await asyncio.to_thread(_score_pairs, query, passages, s.rerank_max_length)
     base = [h.score for h in hits]
 
     def norm(vals: list[float]) -> list[float]:
@@ -166,7 +169,10 @@ async def http_rerank(
 
     s = get_settings()
     target = url or s.rerank_url
-    texts = [h.chunk.text for h in hits]
+    texts = [
+        f"{h.chunk.heading_path}\n{h.chunk.text}" if h.chunk.heading_path else h.chunk.text
+        for h in hits
+    ]
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
             target, json={"query": query, "texts": texts, "truncate": True, "raw_scores": False}

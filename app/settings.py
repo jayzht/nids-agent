@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     rerank_max_length: int = 512
     # 0 = 纯重排分；1 = 纯融合分。实测混合比纯重排稳（不会把原本第 1 的降下去）
     rerank_blend: float = 0.5
+    # 重排时用用户的原始问题（中文自然语言）还是改写后的检索式（英文关键词）
+    rerank_use_question: bool = True
     rerank_timeout: float = 30.0
     # ATT&CK 映射模式：keyword（静态+关键词，默认）| semantic（加知识库语义兜底）
     attack_mapping_mode: str = "keyword"

@@ -66,7 +66,12 @@ async def run_eval(
         expected = item.get("expected_docs", [])
         target_kb = item.get("kb")
 
-        hits = await retriever.search(query, kbs=[target_kb] if target_kb else None, k=top_k)
+        hits = await retriever.search(
+            query,
+            kbs=[target_kb] if target_kb else None,
+            k=top_k,
+            rerank_query=question if retriever.settings.rerank_use_question else None,
+        )
         doc_paths = [h.chunk.path for h in hits]
         row: dict[str, Any] = {
             "id": item.get("id"),
@@ -75,6 +80,8 @@ async def run_eval(
             "kb": target_kb,
             "retrieved": doc_paths,
             f"recall@{top_k}": metrics.recall_at_k(doc_paths, expected, top_k),
+            "hit@1": metrics.recall_at_k(doc_paths, expected, 1),
+            "hit@3": metrics.recall_at_k(doc_paths, expected, 3),
             "mrr": metrics.mrr(doc_paths, expected),
             f"ndcg@{top_k}": metrics.ndcg_at_k(doc_paths, expected, top_k),
         }

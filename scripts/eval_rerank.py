@@ -51,12 +51,13 @@ async def main() -> None:
         modes = [m for m in modes if m != "http"]
 
     print(f"candidate_k={s.candidate_k} blend={s.rerank_blend} top_k={args.top_k}")
-    print(f"{'mode':10s} {'recall@6':>9s} {'MRR':>8s} {'nDCG@6':>8s} {'耗时':>7s}")
+    print(f"{'mode':10s} {'hit@1':>7s} {'hit@3':>7s} {'recall@6':>9s} {'MRR':>8s} {'nDCG@6':>8s} {'耗时':>7s}")
     for mode in modes:
         s.rerank_mode = mode
         res = await run_eval(retriever, mgr, kb=args.kb, mode="retrieval", top_k=args.top_k)
         m = res["summary"]
-        print(f"{mode:10s} {m['recall@6']:9.3f} {m['mrr']:8.3f} {m['ndcg@6']:8.3f} {res['elapsed']:6.1f}s")
+        print(f"{mode:10s} {m['hit@1']:7.3f} {m['hit@3']:7.3f} {m['recall@6']:9.3f} "
+              f"{m['mrr']:8.3f} {m['ndcg@6']:8.3f} {res['elapsed']:6.1f}s")
 
 
 if __name__ == "__main__":

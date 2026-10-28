@@ -24,6 +24,7 @@ class Retriever:
         candidate_k: int | None = None,
         rerank_mode: str | None = None,
         prefixes: list[str] | None = None,
+        rerank_query: str | None = None,
     ) -> list[Hit]:
         s = self.settings
         k = k or s.top_k
@@ -39,7 +40,9 @@ class Retriever:
         merged = await self._search_many(query, qvec, targets, candidate_k, prefixes)
         if not merged:
             return []
-        return await rerank(query, merged, k, mode=rerank_mode or s.rerank_mode)
+        return await rerank(
+            rerank_query or query, merged, k, mode=rerank_mode or s.rerank_mode
+        )
 
     async def _search_many(
         self,
@@ -48,6 +51,7 @@ class Retriever:
         targets: list[str],
         candidate_k: int,
         prefixes: list[str] | None = None,
+        rerank_query: str | None = None,
     ) -> list[Hit]:
         """多知识库：先各自召回，再用 RRF 做第二轮融合（跨库分数不可比）。"""
         s = self.settings
