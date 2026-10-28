@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.3.0 — 全 API 运行形态（零本地模型）
+
+- 新增「全 API」组合：DeepSeek 生成 + BM25 检索 + DeepSeek listwise 重排，
+  不需要任何本地模型或显存。
+- 实测（ids 22 题）：recall@6 0.955 / MRR 0.776 / nDCG 0.822，单次问答 **5.6s**。
+- 对比：混合检索无重排 MRR 0.835 / 7s；混合 + 本地 cross-encoder MRR 0.895 / 12s。
+- 取舍明确：全 API 省掉 bge-m3 和 reranker，代价是 MRR 低 0.12。
+
 ## v2.2.0 — cross-encoder 重排接入（先负后正）
 
 - 新增 `RERANK_MODE=local`：bge-reranker-v2-m3（2.27GB）+ transformers 裸打分，

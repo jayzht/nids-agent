@@ -62,7 +62,7 @@ uvicorn app.main:app --port 8000     # http://127.0.0.1:8000
 | 索引构建 | 约 53 秒（CPU，8 核并行向量化） | bge-m3，1024 维 |
 | 检索质量（技术文档） | recall@6 **0.893** / MRR 0.757 / nDCG@6 0.791 | 28 题 golden set |
 | 检索质量（NIDS 领域） | recall@6 **1.00** / MRR 0.837 / nDCG@6 0.878 | 22 题 golden set（含 6 题 ATT&CK） |
-| 单次问答 | **2.2 秒**（vLLM 3B）/ 16~40 秒（CPU Ollama） | 4 次 LLM 调用；换后端只改环境变量 |
+| 单次问答 | **5.6 秒**（全 API：DeepSeek） / 12 秒（本地向量+重排） | 5 次 LLM 调用；换后端只改环境变量 |
 | 流量取证 | 16~39 秒/份 pcap | 规则引擎 <1s，其余是 LLM；确定性结论没 LLM 也能出 |
 | 真实样本（30 份） | 行为 9/30，签名补足 16，**合计 25/30（83%）** | 误报对照 0/1 |
 | 真实恶意流量 | 12 份，**5 份产生告警（42%）**，误报对照 0 触发 | 见 `docs/REAL_TRAFFIC_BENCHMARK.md` |
@@ -714,6 +714,17 @@ CPU 推理约 4~5s/次；多查询场景已改成「先合并候选、只重排�
 
 ---
 
+### 三种运行形态（按依赖从轻到重）
+
+| 形态 | 生成 | 检索 | 重排 | recall@6 | MRR | nDCG@6 | 延迟 |
+|---|---|---|---|---:|---:|---:|---:|
+| **全 API（当前）** | DeepSeek | 纯 BM25 | DeepSeek listwise | 0.955 | 0.776 | 0.822 | **5.6s** |
+| 混合检索，无重排 | DeepSeek | bge-m3 + BM25 | 无 | 1.000 | 0.835 | 0.876 | 7s |
+| 混合检索 + 本地 CE | DeepSeek | bge-m3 + BM25 | bge-reranker | 1.000 | **0.895** | **0.922** | 12s |
+
+全 API 形态零本地模型、零显存，代价是 MRR 低 0.12——因为 DeepSeek 不提供 embeddings，
+只能用 BM25（纯词面匹配）。想要质量就换回 bge-m3；想要省事就全 API。
+
 ## 十、这个项目覆盖的岗位知识点
 
 `docs/INTERVIEW_MAP.md` 是一张完整对照表（知识点 → 代码位置 → 面试问法），覆盖：
@@ -733,7 +744,7 @@ CPU 推理约 4~5s/次；多查询场景已改成「先合并候选、只重排�
 |---|---|---|
 | 检查点在内存 | 重启后多轮记忆丢失 | 换 `SqliteSaver` / `PostgresSaver` |
 | 没有增量索引 | 改一篇文章要全量重建 | 用 chunk 指纹做 diff |
-| 重排默认关闭 | 用对输入后 MRR +7%；但 CPU 4.5s/查询 | 默认 `none`；`RERANK_MODE=local/http` 可开，GPU 上才适合默认开 |
+| 重排两种实现 | 全 API 用 LLM listwise（+1s）；本地 cross-encoder 质量更高但 +4.5s | `RERANK_MODE=llm/local/http` 三选一 |
 | 无鉴权/多租户 | 单机 Demo | API Key + KB 级 ACL |
 | CPU 推理慢 | 25~40 秒/问 | 上 GPU、或 `LLM_FAST_MODEL` 用小模型做路由/打分 |
 | 评测集偏小 | 44 题（技术 28 + 领域 16） | 扩到 100+ 并按问题类型分桶 |
