@@ -12,13 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import chat, evals, kb, siem, traffic
 from app.agent.checkpointer import close as close_checkpointer
 from app.agent.checkpointer import setup as setup_checkpointer
+from app.api import chat, evals, kb, siem, traffic
 from app.deps import get_siem_store
 from app.kb import get_kb_manager
-from app.siem.tailer import watch
 from app.settings import get_settings
+from app.siem.tailer import watch
 
 logging.basicConfig(
     level=logging.INFO,

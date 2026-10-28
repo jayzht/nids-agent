@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     # ---------- 检查点（多轮记忆） ----------
     checkpoint_backend: str = "sqlite"   # sqlite（持久，重启不丢）| memory（仅测试）
     checkpoint_db: Path = BASE_DIR / "data" / "checkpoints.sqlite"
+    # 会话检查点保留天数，启动时清理更早的（0 表示不清理）
+    checkpoint_retention_days: float = 7.0
 
     # ---------- LLM（OpenAI 兼容协议：Ollama / DeepSeek / 通义 / vLLM 都能接） ----------
     llm_base_url: str = "http://127.0.0.1:11434/v1"

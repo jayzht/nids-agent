@@ -16,8 +16,8 @@ from typing import Any, AsyncIterator
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
 
-from app.agent.checkpointer import get_checkpointer
 from app.agent import prompts
+from app.agent.checkpointer import get_checkpointer
 from app.agent.tools import build_tools
 from app.core.llm import get_chat_model
 from app.kb import KBManager

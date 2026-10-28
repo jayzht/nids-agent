@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from app.agent.graph import RAGAgent
 from app.agent.fusion_graph import FusionAgent
-from app.agent.traffic_graph import TrafficAgent
+from app.agent.graph import RAGAgent
 from app.agent.react import ReActDocAgent
+from app.agent.traffic_graph import TrafficAgent
 from app.kb import get_kb_manager
 from app.retrieval.service import Retriever
 from app.settings import get_settings

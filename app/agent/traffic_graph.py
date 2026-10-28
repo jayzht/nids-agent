@@ -10,10 +10,11 @@
 from __future__ import annotations
 
 import logging
+import operator
 import re
 import time
 import uuid
-from typing import Any, AsyncIterator
+from typing import Annotated, Any, AsyncIterator, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -25,8 +26,6 @@ from app.retrieval.service import Retriever
 from app.settings import Settings
 from app.traffic.sanitize import new_nonce, validate_report, wrap_untrusted
 from app.traffic.tools import TrafficService
-import operator
-from typing import Annotated, TypedDict
 
 logger = logging.getLogger(__name__)
 

@@ -16,7 +16,7 @@ import base64
 import hashlib
 from pathlib import Path
 
-from scapy.all import DNS, DNSQR, Ether, IP, Raw, TCP, UDP, wrpcap
+from scapy.all import DNS, DNSQR, IP, TCP, UDP, Ether, Raw, wrpcap
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "data" / "pcaps" / "samples"

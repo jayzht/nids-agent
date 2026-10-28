@@ -12,8 +12,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from app.traffic import pcap as pc
-from app.traffic.sanitize import scan_untrusted
 from app.traffic.models import Analysis, Finding, Flow
+from app.traffic.sanitize import scan_untrusted
 
 # 常见扫描器 / 自动化工具 UA（生产环境应该用情报库，这里给可解释的基线）
 _HTTP_PORTS = {80, 8000, 8080, 8081, 8888, 3128, 8008}

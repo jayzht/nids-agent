@@ -714,6 +714,11 @@ get_checkpointer() -> MemorySaver()
 
 验证方式是打真实的重启：发一轮问题 → `kill` 掉 uvicorn → 重启 → 用同一 `session_id`
 问「我最开始问的是哪个日志里的哪类事件」，答出了 `eve.json` 的 `flow` 事件。
+
+持久化之后要防「只涨不落」，所以加了保留期清理（`CHECKPOINT_RETENTION_DAYS`，默认 7 天）。
+这里省了一列时间戳：LangGraph 的 `checkpoint_id` 是 **UUIDv6**，前 60 bit 就是时间戳，
+字符串字典序等于时间序，所以 `MAX(checkpoint_id) < 阈值` 就能在 SQL 里直接筛出闲置会话，
+启动时顺手删掉。
 这一条比「我用了 SqliteSaver」值钱：checkpointer 存的是**整个图状态在每个 super-step 的快照**，
 而 `messages` 只是状态里的一个字段——所以前者能做断点续跑和时间旅行，后者只能当聊天记录用。
 
@@ -838,6 +843,7 @@ CPU 推理约 4~5s/次；多查询场景已改成「先合并候选、只重排�
 | ~~检查点在内存~~ | ✅ 已换 `AsyncSqliteSaver`，落 `data/checkpoints.sqlite`，重启后接着聊 | 多实例部署时换 `PostgresSaver` |
 | 没有增量索引 | 改一篇文章要全量重建 | 用 chunk 指纹做 diff |
 | 重排三种实现 | 默认本地 cross-encoder；`none` 快 5s；`http` 走云端更快 | 见「重排 A/B」一节的实测选择 |
+| 检查点保留期 | 按 `CHECKPOINT_RETENTION_DAYS`（默认 7 天）在启动时清理闲置会话 | 需要更细粒度时改成按用户/按会话配额 |
 | 无鉴权/多租户 | 单机 Demo | API Key + KB 级 ACL |
 | CPU 推理慢 | 25~40 秒/问 | 上 GPU、或 `LLM_FAST_MODEL` 用小模型做路由/打分 |
 | 评测集偏小 | 50 题（技术 28 + 领域 22），已够做 A/B，不够做显著性检验 | 扩到 100+ 并按问题类型分桶 |

@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from _net import log, proxy_candidates  # noqa: E402
+
 from app.ingest.converters import html_to_markdown  # noqa: E402
 from app.ingest.pdf import pdf_to_markdown  # noqa: E402
 

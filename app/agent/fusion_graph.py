@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import operator
 import re
 import time
 import uuid
 from typing import Annotated, Any, AsyncIterator, TypedDict
-import operator
 
 from langgraph.graph import END, START, StateGraph
 

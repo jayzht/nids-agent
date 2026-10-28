@@ -78,3 +78,45 @@ async def test_memory_backend_keeps_old_behaviour(tmp_path):
     saver = await checkpointer.setup(s)
     assert isinstance(saver, MemorySaver)
     assert not (tmp_path / "x.sqlite").exists()
+
+
+async def test_uuid6_helpers_are_time_sorted():
+    import time
+
+    import pytest
+
+    from app.agent.checkpointer import uuid6_id, uuid6_time
+
+    now = time.time()
+    a, b = uuid6_id(now - 60), uuid6_id(now)
+    assert a < b, "UUIDv6 字典序必须等于时间序（清理用的就是字符串比较）"
+    assert uuid6_time(b) == pytest.approx(now, abs=1e-3)
+
+
+async def test_prune_drops_idle_threads(tmp_path):
+    """保留期到了就删；界限之内的会话不能误删。"""
+    import asyncio
+
+    from app.agent import checkpointer as cp
+    from app.settings import Settings
+
+    await cp.close()
+    s = Settings(checkpoint_db=tmp_path / "cp.sqlite", checkpoint_retention_days=0)
+    await cp.setup(s)  # retention=0 表示启动时不清理
+
+    from langgraph.graph import END, START, StateGraph
+
+    g = StateGraph(dict)
+    g.add_node("n", lambda st: {"n": 1})
+    g.add_edge(START, "n")
+    g.add_edge("n", END)
+    graph = g.compile(checkpointer=cp.get_checkpointer())
+    await graph.ainvoke({}, {"configurable": {"thread_id": "idle"}})
+
+    assert await cp.prune(0) == 0, "retention<=0 不应清理"
+    await asyncio.sleep(1.1)
+    assert await cp.prune(1 / 86400) == 1, "1 秒保留期应清掉刚写的会话"
+    rows = (await (await cp.get_checkpointer().conn.execute(
+        "SELECT COUNT(*) FROM checkpoints")).fetchone())[0]
+    assert rows == 0
+    await cp.close()

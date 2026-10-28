@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
-from app.api.schemas import KBInfo, KBCreateRequest
+from app.api.schemas import KBCreateRequest, KBInfo
 from app.kb import IngestState, get_kb_manager
 from app.settings import get_settings
 
