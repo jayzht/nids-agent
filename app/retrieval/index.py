@@ -156,8 +156,12 @@ class KBIndex:
         小样本差异不必太当真，但既然测了就用数据更好的那个。
         """
         s = self.settings
-        dense = self.dense_search(qvec, candidate_k)
-        sparse = self.sparse_search(query, candidate_k) if s.bm25_weight > 0 else []
+        if s.retrieval_mode == "sparse" or qvec is None:
+            dense: list[tuple[int, float]] = []
+            sparse = self.sparse_search(query, candidate_k)
+        else:
+            dense = self.dense_search(qvec, candidate_k)
+            sparse = self.sparse_search(query, candidate_k) if s.bm25_weight > 0 else []
         dense_map = dict(dense)
         sparse_map = dict(sparse)
 

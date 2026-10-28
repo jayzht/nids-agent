@@ -96,6 +96,7 @@ async def info():
             "candidate_k": s.candidate_k,
             "bm25_weight": s.bm25_weight,
             "fusion": s.fusion,
+            "retrieval_mode": s.retrieval_mode,
             "rerank_mode": s.rerank_mode,
         },
         "chunking": {"chunk_tokens": s.chunk_tokens, "overlap": s.chunk_overlap_tokens},

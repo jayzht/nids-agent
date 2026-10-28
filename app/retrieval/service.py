@@ -32,7 +32,10 @@ class Retriever:
         if not targets:
             return []
 
-        qvec = await get_embedder().embed_query(query)
+        if s.retrieval_mode == "sparse":
+            qvec = None      # 纯 BM25，不需要 embedding 服务
+        else:
+            qvec = await get_embedder().embed_query(query)
         merged = await self._search_many(query, qvec, targets, candidate_k, prefixes)
         if not merged:
             return []

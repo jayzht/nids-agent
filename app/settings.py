@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     candidate_k: int = 40          # 混合检索的候选池大小
     bm25_weight: float = 0.2       # 稠密/稀疏融合权重（用 scripts/sweep.py 定出来的）
     fusion: str = "normalized"     # rrf | normalized
+    # sparse = 只用 BM25，不需要 embedding 服务（换云端 LLM 但没有 embedding 时用）
+    retrieval_mode: str = "hybrid"  # hybrid | sparse
     rrf_k: int = 60                # RRF 平滑常数
     rerank_mode: str = "none"      # none | lexical | llm
     # ATT&CK 映射模式：keyword（静态+关键词，默认）| semantic（加知识库语义兜底）

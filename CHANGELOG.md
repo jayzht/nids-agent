@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.9.0 — 云后端（DeepSeek）+ 纯 BM25 检索模式
+
+- 新增 `RETRIEVAL_MODE=hybrid|sparse`：sparse 模式跳过 embeddings，只走 BM25。
+- 适配 DeepSeek（无 embeddings 接口）：`LLM_MODEL=deepseek-chat` + `RETRIEVAL_MODE=sparse`。
+- 实测：50 题 recall@6 0.94 / MRR 0.68；文档问答 5.0s，多 Agent 研判 25.8s。
+- `/api/info` 暴露 `retrieval_mode`。
+- 测试保持 138 个全绿。
+
 ## v1.8.0 — 映射评测 + 前端契约测试 + 容器验证
 
 - **ATT&CK 映射评测**：29 条真实签名的标注集 + 三种方案对比（关键词 60.3%、
