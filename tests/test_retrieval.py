@@ -94,3 +94,24 @@ def test_metrics_with_empty_input():
     assert recall_at_k([], ["x"], 5) == 0.0
     assert mrr([], ["x"]) == 0.0
     assert ndcg_at_k([], ["x"], 5) == 0.0
+
+
+async def test_http_rerank_falls_back_when_service_unreachable(monkeypatch):
+    """云端重排挂了不能把整条链路拖死：必须降级到规则重排，而不是抛异常或等 30s。"""
+    from app.retrieval import rerank as R
+    from app.settings import get_settings
+
+    s = get_settings()
+    monkeypatch.setattr(s, "rerank_mode", "http")
+    monkeypatch.setattr(s, "rerank_url", "http://127.0.0.1:9/rerank")  # 必然拒连
+    monkeypatch.setattr(s, "rerank_timeout", 2.0)
+
+    hits = [
+        Hit(make_chunk("a", "unrelated prose about cooking", "Misc"), score=0.9),
+        Hit(make_chunk("b", "```python\nDepends(get_db)\n```", "Dependencies"), score=0.5),
+    ]
+    ranked = await R.rerank("Dependencies usage example", hits, top_n=2, mode="http")
+    assert [h.chunk.chunk_id for h in ranked] == [
+        h.chunk.chunk_id for h in R.lexical_rerank("Dependencies usage example", hits, top_n=2)
+    ], "服务不可用时应当降级成规则重排，而不是抛异常或返回原序"
+    assert [h.rank for h in ranked] == [1, 2]

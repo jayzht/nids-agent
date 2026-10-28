@@ -76,14 +76,25 @@ async def local_rerank(query: str, hits: list[Hit], top_n: int) -> list[Hit]:
     ]
     scores = await asyncio.to_thread(_score_pairs, query, passages, s.rerank_max_length)
     base = [h.score for h in hits]
+    return _blend_and_rank(hits, base, [float(x) for x in scores], s.rerank_blend, top_n)
 
+
+def _blend_and_rank(
+    hits: list[Hit], base: list[float], ce: list[float], blend: float, top_n: int
+) -> list[Hit]:
+    """把「检索融合分」和「cross-encoder 分」各自 min-max 后加权。
+
+    两种后端（本地 logits / 云端 sigmoid）量纲不同，但归一化后可比，
+    所以 local 和 http 走同一个融合函数，A/B 结果才可迁移。
+    blend=1 等价于不重排，blend=0 等价于纯 cross-encoder。
+    """
     def norm(vals: list[float]) -> list[float]:
         lo, hi = min(vals), max(vals)
         span = hi - lo
         return [0.5] * len(vals) if span < 1e-9 else [(v - lo) / span for v in vals]
 
-    alpha = max(0.0, min(1.0, s.rerank_blend))
-    nbase, nce = norm(base), norm([float(x) for x in scores])
+    alpha = max(0.0, min(1.0, blend))
+    nbase, nce = norm(base), norm(ce)
     for h, b, c in zip(hits, nbase, nce):
         h.score = alpha * b + (1 - alpha) * c
     ranked = sorted(hits, key=lambda h: h.score, reverse=True)[:top_n]
@@ -180,7 +191,9 @@ async def http_rerank(
             "model": s.rerank_model,
             "query": query,
             "documents": texts,
-            "top_n": top_n,
+            # 取全部候选的分数：只取 top_n 的话，后面的候选在融合时没有 CE 分，
+            # blend 权重就形同虚设（实测 0.3/0.5/0.7 结果完全一样，就是因为这个）
+            "top_n": len(texts),
             "return_documents": False,
         }
         if s.rerank_api_key:
@@ -194,20 +207,17 @@ async def http_rerank(
         data = resp.json()
 
     items = data if isinstance(data, list) else data.get("results", [])
-    order: dict[int, float] = {}
+    scores_by_index: dict[int, float] = {}
     for item in items:
         score = item.get("score", item.get("relevance_score", 0.0))
-        order[int(item["index"])] = float(score)
-    if not order:
+        scores_by_index[int(item["index"])] = float(score)
+    if not scores_by_index:
         raise RuntimeError("rerank 服务返回空结果")
 
-    for i, h in enumerate(hits):
-        h.score = order.get(i, -1e9)
-    picked = sorted(enumerate(hits), key=lambda pair: order.get(pair[0], -1e9), reverse=True)
-    result = [h for _, h in picked[:top_n]]
-    for i, h in enumerate(result):
-        h.rank = i + 1
-    return result
+    # top_n 之外的候选没被打分，给最低分，保证不会挤进结果
+    base = [h.score for h in hits]
+    ce = [scores_by_index.get(i, -1e9) for i in range(len(hits))]
+    return _blend_and_rank(hits, base, ce, s.rerank_blend, top_n)
 
 
 async def rerank(query: str, hits: list[Hit], top_n: int, mode: str = "lexical") -> list[Hit]:
