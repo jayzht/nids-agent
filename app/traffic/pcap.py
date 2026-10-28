@@ -38,7 +38,7 @@ MAIN_FIELDS = [
 ]
 
 DNS_FIELDS = ["frame.number", "dns.qry.name", "dns.flags.response", "dns.flags.rcode",
-              "ip.src", "ip.dst"]
+              "ip.src", "ip.dst", "udp.srcport", "udp.dstport"]
 HTTP_FIELDS = [
     "frame.number",
     "http.request.method",
@@ -98,6 +98,13 @@ def read_fields(
     return rows
 
 
+def _int_or_zero(value: str | None) -> int:
+    try:
+        return int(str(value).strip() or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _flag_name(hex_flags: str) -> str:
     """把 tshark 的 0x0012 转成 SYN/ACK 之类的可读标记。"""
     try:
@@ -112,8 +119,8 @@ def _flag_name(hex_flags: str) -> str:
     return ",".join(names)
 
 
-def read_packets(path: Path) -> list[Packet]:
-    rows = read_fields(path, MAIN_FIELDS)
+def read_packets(path: Path, limit: int | None = None) -> list[Packet]:
+    rows = read_fields(path, MAIN_FIELDS, limit=limit)
     pkts: list[Packet] = []
     for r in rows:
         no, ts, length, src, dst, _ipproto, tsrc, tdst, flags, usrc, udst, proto, info = r
@@ -141,7 +148,7 @@ def read_packets(path: Path) -> list[Packet]:
 def read_dns(path: Path) -> list[dict]:
     rows = read_fields(path, DNS_FIELDS, display_filter="dns")
     out = []
-    for no, name, is_resp, rcode, src, dst in rows:
+    for no, name, is_resp, rcode, src, dst, sport, dport in rows:
         if not name:
             continue
         out.append(
@@ -152,6 +159,8 @@ def read_dns(path: Path) -> list[dict]:
                 "rcode": rcode or "0",
                 "src": src,
                 "dst": dst,
+                "sport": _int_or_zero(sport),
+                "dport": _int_or_zero(dport),
             }
         )
     return out

@@ -17,6 +17,7 @@ data/alerts/
 data/suricata/
 # reranker / embedding 权重，按需下载
 data/models/
+data/labeled/
 data/*.db
 data/*.db-wal
 data/*.db-shm

@@ -127,3 +127,44 @@ def test_read_http_bodies_survives_broken_output(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pc, "_run", lambda cmd: "not json at all")
     assert pc.read_http_bodies(tmp_path / "x.pcap") == {}
+
+
+def test_dns_volume_flags_only_high_volume_hosts():
+    """DNS 量级异常：感染主机 5 万查询要报，普通终端几十次要静默。"""
+    from app.traffic.analyzer import TrafficAnalyzer
+
+    a = TrafficAnalyzer()
+    dns = [
+        {"no": i, "name": f"h{i}.example", "src": "10.0.0.5", "dst": "10.0.0.1",
+         "sport": 1025 + i, "dport": 53, "response": False, "rcode": "0"}
+        for i in range(6000)
+    ] + [
+        {"no": 9000 + i, "name": f"ok{i}.example", "src": "10.0.0.9", "dst": "10.0.0.1",
+         "sport": 40000 + i, "dport": 53, "response": False, "rcode": "0"}
+        for i in range(30)
+    ]
+    findings = a.detect_dns_volume(dns, threshold=5000)
+    assert len(findings) == 1, "只应命中高量级那台主机"
+    f = findings[0]
+    assert f.kind == "dns_volume"
+    assert f.metrics["queries"] == 6000
+    assert len(f.metrics["scope"]) == 6000, "scope 要给出精确五元组，供带标注评测匹配"
+
+
+def test_smtp_fanout_needs_many_distinct_targets():
+    from app.traffic.analyzer import TrafficAnalyzer
+    from app.traffic.models import Flow
+
+    a = TrafficAnalyzer()
+
+    def flow(src, dst, dport):
+        return Flow(
+            key=f"{src}|{dst}:{dport}", a_ip=src, a_port=50000, b_ip=dst, b_port=dport,
+            first_ts=0.0, last_ts=1.0, initiator=src, responder=dst, target_port=dport,
+        )
+
+    spam = [flow("10.0.0.5", f"8.8.8.{i}", 25) for i in range(60)]
+    benign = [flow("10.0.0.9", "smtp.internal", 25) for _ in range(20)]
+    findings = a.detect_smtp_fanout(spam + benign, min_targets=50)
+    assert len(findings) == 1
+    assert findings[0].metrics["targets"] == 60

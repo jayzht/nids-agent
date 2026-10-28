@@ -27,6 +27,7 @@ BEHAVIOR_STAGE = {
     "repeated_attempts": "credential_attack",
     "beacon": "c2", "beacon_payload": "c2",
     "dns_tunnel": "exfil",
+    "dns_volume": "c2", "smtp_fanout": "exfil",
     "cleartext_http": "c2", "suspicious_http": "c2",
     "exploit_payload": "exploitation",
     "prompt_injection": "anomaly",

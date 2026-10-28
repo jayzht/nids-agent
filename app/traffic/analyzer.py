@@ -194,6 +194,73 @@ class TrafficAnalyzer:
             )
         return findings
 
+    def detect_dns_volume(self, dns: list[dict], threshold: int = 5000) -> list[Finding]:
+        """单主机 DNS 请求量异常：DGA / DNS 隧道 / 垃圾邮件投递的常见前置行为。
+
+        为什么用它而不是「高熵域名」：实测 CTU-13 的感染主机 1 小时发了 5.8 万次查询、
+        7212 个不同域名，但域名长得很像正常基础设施（orderbox-dns、gtld-servers），
+        熵值根本不区分。**量**才是这里最稳的确定性信号。
+        """
+        by_src: dict[str, list[dict]] = defaultdict(list)
+        for r in dns:
+            if r["response"]:
+                continue
+            by_src[r["src"]].append(r)
+        findings: list[Finding] = []
+        for src, rows in by_src.items():
+            if len(rows) < threshold:
+                continue
+            names = {r["name"] for r in rows}
+            scope = [[r["src"], r["sport"], r["dst"], r["dport"]] for r in rows][:30000]
+            findings.append(
+                Finding(
+                    id="", kind="dns_volume", severity="medium",
+                    title=f"DNS 请求量异常：{src} 发出 {len(rows)} 次查询",
+                    detail=(
+                        f"{src} 在本次抓包里发出 {len(rows)} 次 DNS 查询、{len(names)} 个不同域名"
+                        f"（阈值 {threshold} 次）。感染主机做 DGA/隧道/邮件投递时会呈现这种量级；"
+                        f"正常终端一小时的查询量通常是个位数到几十。"
+                    ),
+                    metrics={"queries": len(rows), "distinct": len(names), "scope": scope},
+                    evidence=[r["no"] for r in rows[:10]],
+                    knowledge_queries=[
+                        "dns tunneling detection volume threshold",
+                        "sigma rule dns query volume anomaly",
+                        "T1071.004 application layer protocol dns",
+                    ],
+                )
+            )
+        return findings
+
+    def detect_smtp_fanout(self, flows: list[Flow], min_targets: int = 50) -> list[Finding]:
+        """单主机向大量不同目标发 SMTP —— 典型的垃圾邮件僵尸行为。"""
+        by_src: dict[str, set[str]] = defaultdict(set)
+        for f in flows:
+            if 25 in (f.a_port, f.b_port):
+                by_src[f.initiator].add(f.a_ip if f.initiator == f.b_ip else f.b_ip)
+        findings: list[Finding] = []
+        for src, targets in by_src.items():
+            if len(targets) < min_targets:
+                continue
+            findings.append(
+                Finding(
+                    id="", kind="smtp_fanout", severity="medium",
+                    title=f"SMTP 扇出异常：{src} 连接了 {len(targets)} 个不同目标",
+                    detail=(
+                        f"{src} 向 {len(targets)} 个不同主机的 25 端口发起连接"
+                        f"（阈值 {min_targets} 个）。单台终端直接对外发信到这么多目标，"
+                        f"更符合垃圾邮件僵尸而非正常邮件客户端（后者通常只连固定的中继）。"
+                    ),
+                    metrics={"targets": len(targets)},
+                    evidence=[],
+                    knowledge_queries=[
+                        "spambot smtp fanout detection",
+                        "sigma rule mass email sending",
+                    ],
+                )
+            )
+        return findings
+
     def detect_beacon(self, flows: list[Flow], packets) -> list[Finding]:
         syn_times: dict[tuple[str, str, int], list[tuple[float, int]]] = defaultdict(list)
         for p in packets:
@@ -393,8 +460,12 @@ class TrafficAnalyzer:
         ]
 
     # ------------------------------------------------------------------
-    def analyze(self, path: Path) -> Analysis:
-        packets = pc.read_packets(path)
+    def analyze(
+        self, path: Path, max_packets: int | None = None, packets: list | None = None
+    ) -> Analysis:
+        """max_packets / packets 用于大文件评测：只跑前 N 个包，或复用已解析的包。"""
+        if packets is None:
+            packets = pc.read_packets(path, limit=max_packets)
         if not packets:
             raise ValueError(f"{path.name} 里没有可解析的数据包")
 
@@ -447,6 +518,8 @@ class TrafficAnalyzer:
         findings += self.detect_horizontal_scan(flows)
         findings += self.detect_repeated_attempts(packets)
         findings += self.detect_dns_tunnel(dns)
+        findings += self.detect_dns_volume(dns)
+        findings += self.detect_smtp_fanout(flows)
         findings += self.detect_beacon(flows, packets)
         findings += self.detect_suspicious_http(http)
         cleartext = pc.read_cleartext_http(path)
