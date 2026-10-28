@@ -1,4 +1,4 @@
-.PHONY: help setup fetch fetch-domain samples real benchmark alerts suricata index run test eval sweep docker clean
+.PHONY: help setup fetch fetch-domain samples real benchmark alerts suricata sigma index run test eval sweep docker clean
 
 PY := .venv/bin/python
 
@@ -11,6 +11,7 @@ help:
 	@echo "make benchmark 在真实样本上跑检测基准，写入 docs/"
 	@echo "make alerts  把检测结果转成 eve.json 告警（可 --post 推给 API）"
 	@echo "make suricata 下载 ET Open 规则 + Suricata 镜像（多 Agent 签名检测用）"
+	@echo "make sigma    拉取 Sigma 规则并转成 Markdown（检测工程语料）"
 	@echo "make index   构建/重建全部知识库索引"
 	@echo "make run     启动 FastAPI 服务 http://127.0.0.1:8000"
 	@echo "make test    跑单元测试"
@@ -29,6 +30,9 @@ samples:
 
 suricata:
 	$(PY) scripts/fetch_suricata_rules.py
+
+sigma:
+	$(PY) scripts/fetch_sigma_rules.py
 
 real:
 	$(PY) scripts/fetch_real_pcaps.py

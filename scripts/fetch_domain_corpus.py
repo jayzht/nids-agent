@@ -150,12 +150,26 @@ def convert_git(src: GitSource, proxies: list[str | None], out_root: Path, urls:
 
 RFCS: list[tuple[int, str]] = [
     (791, "Internet Protocol"),
-    (793, "Transmission Control Protocol"),
-    (768, "User Datagram Protocol"),
     (792, "Internet Control Message Protocol"),
+    (768, "User Datagram Protocol"),
+    (793, "Transmission Control Protocol"),
+    (9293, "Transmission Control Protocol (TCP) Specification"),
+    (1034, "Domain Names - Concepts and Facilities"),
     (1035, "Domain Names - Implementation and Specification"),
+    (2131, "Dynamic Host Configuration Protocol"),
+    (2865, "Remote Authentication Dial In User Service (RADIUS)"),
+    (3954, "Cisco Systems NetFlow Services Export Version 9"),
+    (4120, "The Kerberos Network Authentication Service (V5)"),
+    (4443, "ICMPv6 for IPv6"),
+    (4511, "Lightweight Directory Access Protocol (LDAP): The Protocol"),
+    (5246, "The Transport Layer Security (TLS) Protocol Version 1.2"),
+    (5424, "The Syslog Protocol"),
+    (7011, "IP Flow Information Export (IPFIX) Protocol"),
     (8446, "The Transport Layer Security (TLS) Protocol Version 1.3"),
+    (8484, "DNS Queries over HTTPS (DoH)"),
+    (9000, "QUIC: A UDP-Based Multiplexed and Secure Transport"),
     (9110, "HTTP Semantics"),
+    (9113, "HTTP/2"),
 ]
 
 RFC_BASE = "https://www.rfc-editor.org/rfc/rfc{n}.txt"
@@ -312,10 +326,16 @@ def scan_urls(out_root: Path) -> dict[str, str]:
         elif top == "sigma":
             url = f"https://github.com/SigmaHQ/sigma/blob/master/documentation/{stem}.md"
         elif top == "mitre":
-            m = re.match(r"(T[A]?\d{3}(?:\.\d{3})?)-", stem)
+            m = re.match(r"([TSGM]\d{3}(?:\.\d{3})?)-", stem)
             if m:
-                kind = "tactics" if rest.startswith("tactics/") else "techniques"
-                url = f"https://attack.mitre.org/{kind}/{m.group(1)}/"
+                tid = m.group(1)
+                kind = {"T": "techniques", "S": "software", "G": "groups",
+                        "M": "mitigations"}.get(tid[0], "techniques")
+                if rest.startswith("tactics/"):
+                    kind = "tactics"
+                url = f"https://attack.mitre.org/{kind}/{tid}/"
+        elif top == "sigma-rules":
+            url = f"https://github.com/SigmaHQ/sigma/blob/master/rules/{stem}.yml"
         elif top == "papers":
             m = re.match(r"(\d{4})_(\d{4,5})-", stem)
             if m:

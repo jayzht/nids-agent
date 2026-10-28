@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.0.0 — 知识库扩容到业内常用语料（1,265 → 5,505 篇）
+
+先用查询实测缺口，再针对性补：
+- **Snort**：只有 Suricata 文档里一页对比 → 仓库文档太薄，暂不纳入
+- **协议规范**：RFC 从 7 篇扩到 21 篇（新增 TCP/9293、TLS1.2、HTTP/2、QUIC、DoH、
+  Kerberos、LDAP、IPFIX、NetFlow v9、Syslog、DHCP、RADIUS、ICMPv6、DNS 1034）
+- **恶意家族**：ATT&CK 增加 software 842 / group 178 / mitigation 44（Mirai、APT28 等可直接查）
+- **防御映射**：用 ATT&CK mitigations 替代 D3FEND（后者只有 TTL 本体，不好转）
+- **检测工程**：Sigma 规则 3,161 条转成 Markdown（含 detection 逻辑与误报说明）
+- 新增 `scripts/fetch_sigma_rules.py`、`make sigma`；`fetch_mitre_attack.py` 扩展三类实体
+
 ## v1.9.0 — 云后端（DeepSeek）+ 纯 BM25 检索模式
 
 - 新增 `RETRIEVAL_MODE=hybrid|sparse`：sparse 模式跳过 embeddings，只走 BM25。

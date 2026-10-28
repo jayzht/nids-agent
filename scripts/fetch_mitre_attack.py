@@ -73,7 +73,26 @@ def main() -> None:
         o for o in objects
         if o.get("type") == "x-mitre-tactic" and not o.get("revoked")
     ]
-    log(f"技术 {len(techniques)} 条，战术 {len(tactics)} 个")
+    software = [
+        o for o in objects
+        if o.get("type") in ("tool", "malware")
+        and not o.get("revoked") and not o.get("x_mitre_deprecated")
+        and attack_id(o).startswith("S")
+    ]
+    groups = [
+        o for o in objects
+        if o.get("type") == "intrusion-set"
+        and not o.get("revoked") and not o.get("x_mitre_deprecated")
+        and attack_id(o).startswith("G")
+    ]
+    mitigations = [
+        o for o in objects
+        if o.get("type") == "course-of-action"
+        and not o.get("revoked") and not o.get("x_mitre_deprecated")
+        and attack_id(o).startswith("M")
+    ]
+    log(f"技术 {len(techniques)} / 战术 {len(tactics)} / 软件 {len(software)} / "
+        f"组织 {len(groups)} / 缓解 {len(mitigations)}")
 
     (OUT / "techniques").mkdir(parents=True, exist_ok=True)
     (OUT / "tactics").mkdir(parents=True, exist_ok=True)
@@ -124,7 +143,64 @@ def main() -> None:
         path = OUT / "tactics" / f"{ta_id}-{slug(t.get('name', ''))}.md"
         path.write_text("\n".join(lines), encoding="utf-8")
 
-    total = len(techniques) + len(tactics)
+    # ---- 恶意软件 / 工具（S####）----
+    (OUT / "software").mkdir(parents=True, exist_ok=True)
+    for o in software:
+        sid = attack_id(o)
+        aliases = o.get("x_mitre_aliases") or o.get("aliases") or []
+        lines = [
+            f"# {sid} {o.get('name', '')}",
+            "",
+            f"> ATT&CK ID: {sid}",
+            f"> 类型: {'工具' if o.get('type') == 'tool' else '恶意软件'}",
+            f"> 平台: {', '.join(o.get('x_mitre_platforms', [])) or 'unknown'}",
+        ]
+        if aliases:
+            lines.append(f"> 别名: {', '.join(aliases[:8])}")
+        lines += ["", "## 描述", "", (o.get("description") or "").strip(), ""]
+        (OUT / "software" / f"{sid}-{slug(o.get('name', ''))}.md").write_text(
+            "\n".join(lines), encoding="utf-8"
+        )
+
+    # ---- 攻击组织（G####）----
+    (OUT / "groups").mkdir(parents=True, exist_ok=True)
+    for o in groups:
+        gid = attack_id(o)
+        aliases = o.get("aliases") or []
+        lines = [
+            f"# {gid} {o.get('name', '')}",
+            "",
+            f"> ATT&CK ID: {gid}",
+            f"> 别名: {', '.join(aliases[:8]) or 'unknown'}",
+            "",
+            "## 描述",
+            "",
+            (o.get("description") or "").strip(),
+            "",
+        ]
+        (OUT / "groups" / f"{gid}-{slug(o.get('name', ''))}.md").write_text(
+            "\n".join(lines), encoding="utf-8"
+        )
+
+    # ---- 缓解措施（M####）----
+    (OUT / "mitigations").mkdir(parents=True, exist_ok=True)
+    for o in mitigations:
+        mid = attack_id(o)
+        lines = [
+            f"# {mid} {o.get('name', '')}",
+            "",
+            f"> ATT&CK ID: {mid}",
+            "",
+            "## 描述",
+            "",
+            (o.get("description") or "").strip(),
+            "",
+        ]
+        (OUT / "mitigations" / f"{mid}-{slug(o.get('name', ''))}.md").write_text(
+            "\n".join(lines), encoding="utf-8"
+        )
+
+    total = len(techniques) + len(tactics) + len(software) + len(groups) + len(mitigations)
     log(f"完成：{total} 篇 -> {OUT}")
     log("下一步: python scripts/fetch_domain_corpus.py --manifest-only && python scripts/build_index.py --kb ids")
 
