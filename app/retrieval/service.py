@@ -8,6 +8,31 @@ from app.core.llm import get_embedder
 from app.kb import KBManager
 from app.retrieval.index import Hit
 from app.retrieval.rerank import rerank
+
+
+def diversify(
+    hits: list[Hit], limit: int, max_per_doc: int = 0, min_tokens: int = 0
+) -> list[Hit]:
+    """同文档限流 + 过滤碎片片段。
+
+    为什么需要：论文类文档动辄几十个片段、且 heading 全是论文标题，BM25 会把
+    整篇的标题词都算成高相关，结果 top-k 被一篇论文霸榜（实测占了 4/6 个坑位），
+    真正回答问题的段落反而进不来。这里按 doc_id 限流，并丢掉 tokens 过小的
+    碎片（作者列表、目录残行）。
+    """
+    out: list[Hit] = []
+    per_doc: dict[str, int] = {}
+    for h in hits:
+        if min_tokens and h.chunk.tokens < min_tokens:
+            continue
+        doc = h.chunk.doc_id
+        if max_per_doc and per_doc.get(doc, 0) >= max_per_doc:
+            continue
+        per_doc[doc] = per_doc.get(doc, 0) + 1
+        out.append(h)
+        if limit and len(out) >= limit:
+            break
+    return out
 from app.settings import Settings
 
 
@@ -38,7 +63,10 @@ class Retriever:
             qvec = None      # 纯 BM25，不需要 embedding 服务
         else:
             qvec = await get_embedder().embed_query(query)
+        # 注意：检索深度不能为了「筛完还够数」而放大——融合分是 min-max 归一化的，
+        # 池子从 20 扩到 60 会改变归一化尺度，实测 MRR 0.898 → 0.865。
         merged = await self._search_many(query, qvec, targets, candidate_k, prefixes)
+        merged = diversify(merged, candidate_k, s.max_per_doc, s.min_chunk_tokens)
         if not merged:
             return []
         if skip_rerank:

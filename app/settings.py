@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     # ---------- 检索 ----------
     top_k: int = 6                 # 最终喂给 LLM 的片段数
     candidate_k: int = 40          # 混合检索的候选池大小
+    # 同一篇文档最多贡献几个候选：论文/长文档常有几十个片段，不限制会被一篇霸榜
+    max_per_doc: int = 3
+    # 过滤掉作者信息、目录这类碎片片段（tokens 太小的几乎没有信息量）
+    min_chunk_tokens: int = 32
+    # 生成时给前 N 个命中补上同文档前后相邻片段（跨页/跨节的问题需要上下文）
+    context_neighbors: int = 1
+    context_neighbor_top: int = 3
     bm25_weight: float = 0.2       # 稠密/稀疏融合权重（用 scripts/sweep.py 定出来的）
     fusion: str = "normalized"     # rrf | normalized
     # sparse = 只用 BM25，不需要 embedding 服务（换云端 LLM 但没有 embedding 时用）

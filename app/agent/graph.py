@@ -325,13 +325,49 @@ class RAGAgent:
             }],
         }
 
+    def _neighbors(self, c: dict) -> list[dict]:
+        """取同文档前后相邻片段，补「跨节」问题的上下文。
+
+        典型场景：问「detection 和 condition 是什么关系」，规范里两节各讲一半，
+        只把命中片段喂进去，模型只能说「资料里没直接说明」。补一条相邻片段后
+        就能拼起来。只给前 N 个命中补，避免 context 爆炸。
+        """
+        s = self.settings
+        if s.context_neighbors <= 0:
+            return []
+        try:
+            index = self.manager.get(c["kb"])
+        except Exception:  # noqa: BLE001
+            return []
+        out: list[dict] = []
+        for n in index.neighbors(c["chunk_id"], window=s.context_neighbors):
+            item = {
+                "chunk_id": n.chunk_id, "doc_id": n.doc_id, "kb": n.kb, "path": n.path,
+                "title": n.title, "heading_path": n.heading_path, "text": n.text,
+                "score": c.get("score", 0.0), "sources": c.get("sources", []),
+                "expanded": True,
+            }
+            if n.tokens >= s.min_chunk_tokens:
+                out.append(item)
+        return out
+
     def _build_context(self, relevant: list[dict]) -> tuple[str, list[dict]]:
+        blocks: list[dict] = []
+        seen: set[str] = set()
+        for i, c in enumerate(relevant):
+            for item in [c] + (self._neighbors(c) if i < self.settings.context_neighbor_top else []):
+                if item["chunk_id"] in seen:
+                    continue
+                seen.add(item["chunk_id"])
+                blocks.append(item)
+
         parts: list[str] = []
         used: list[dict] = []
         total = 0
-        for i, c in enumerate(relevant, 1):
+        for i, c in enumerate(blocks, 1):
+            label = "（相邻片段）" if c.get("expanded") else ""
             block = (
-                f"[{i}] {c['kb']} · {c['heading_path'] or c['title']} · {c['path']}\n"
+                f"[{i}] {c['kb']} · {c['heading_path'] or c['title']} · {c['path']}{label}\n"
                 f"{c['text']}"
             )
             if total + len(block) > self.settings.max_context_chars and used:

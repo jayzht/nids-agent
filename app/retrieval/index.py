@@ -207,6 +207,18 @@ class KBIndex:
             )
         return hits
 
+    def neighbors(self, chunk_id: str, window: int = 1) -> list["Chunk"]:
+        """同一文档内 seq 相邻的片段（用于给生成补上下文）。"""
+        idx = self.by_id.get(chunk_id)
+        if idx is None or window <= 0:
+            return []
+        target = self.chunks[idx]
+        lo, hi = target.seq - window, target.seq + window
+        return [
+            c for c in self.chunks
+            if c.doc_id == target.doc_id and c.chunk_id != chunk_id and lo <= c.seq <= hi
+        ]
+
     # ---------------- 落盘 ----------------
     def save(self, root: Path) -> None:
         path = root / self.meta["name"]

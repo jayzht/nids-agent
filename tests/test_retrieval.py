@@ -12,11 +12,14 @@ from app.retrieval.rerank import lexical_rerank
 from app.settings import Settings
 
 
-def make_chunk(cid: str, text: str, heading: str = "", kb: str = "kb", seq: int = 0) -> Chunk:
+def make_chunk(
+    cid: str, text: str, heading: str = "", kb: str = "kb", seq: int = 0,
+    doc_id: str = "d", tokens: int = 0,
+) -> Chunk:
     return Chunk(
-        chunk_id=cid, doc_id="d", kb=kb, path=f"{cid}.md", title="Doc",
+        chunk_id=cid, doc_id=doc_id, kb=kb, path=f"{cid}.md", title="Doc",
         heading_path=heading, text=text, embed_text=f"{heading}\n{text}",
-        tokens=len(text.split()), seq=seq,
+        tokens=tokens or len(text.split()), seq=seq,
     )
 
 
@@ -115,3 +118,50 @@ async def test_http_rerank_falls_back_when_service_unreachable(monkeypatch):
         h.chunk.chunk_id for h in R.lexical_rerank("Dependencies usage example", hits, top_n=2)
     ], "服务不可用时应当降级成规则重排，而不是抛异常或返回原序"
     assert [h.rank for h in ranked] == [1, 2]
+
+
+def test_diversify_caps_per_doc_and_drops_fragments():
+    """一篇论文不能霸榜；作者列表这类碎片片段不进候选。"""
+    from app.retrieval.service import diversify
+
+    body = " ".join(["word"] * 200)
+    hits = [
+        Hit(make_chunk(f"p{i}", body, "Paper Title", doc_id="paper", tokens=300), score=0.9 - i / 100)
+        for i in range(4)
+    ]
+    hits.append(Hit(make_chunk("a1", "Authors: A, B, C", "Paper Title", doc_id="paper", tokens=10),
+                    score=0.83))
+    hits.append(Hit(make_chunk("z1", "zeek conn.log fields", "Zeek", doc_id="zeek", tokens=200),
+                    score=0.6))
+
+    out = diversify(hits, limit=5, max_per_doc=2, min_tokens=32)
+    ids = [h.chunk.chunk_id for h in out]
+    assert ids == ["p0", "p1", "z1"], ids
+
+
+class _IndexLike:
+    """只测 neighbors 的纯逻辑，不需要向量库。"""
+
+    from app.retrieval.index import KBIndex as _KB
+
+    neighbors = _KB.neighbors
+
+    def __init__(self, chunks):
+        self.chunks = chunks
+        self.by_id = {c.chunk_id: i for i, c in enumerate(chunks)}
+
+
+def test_neighbors_are_seq_adjacent_and_same_doc():
+    chunks = [
+        make_chunk(f"c{i}", f"text {i}", f"Doc > S{i}", seq=i, doc_id="doc1", tokens=100)
+        for i in range(4)
+    ]
+    idx = _IndexLike(chunks)
+    assert [c.chunk_id for c in idx.neighbors("c1", window=1)] == ["c0", "c2"]
+    assert [c.chunk_id for c in idx.neighbors("c3", window=2)] == ["c1", "c2"]
+    assert idx.neighbors("missing") == []
+
+    # 同一文档里 seq 相同但 doc_id 不同的片段不能被当成邻居
+    other = make_chunk("x0", "other", "Other", seq=0, doc_id="doc2", tokens=100)
+    idx2 = _IndexLike(chunks + [other])
+    assert "x0" not in [c.chunk_id for c in idx2.neighbors("c1", window=1)]
