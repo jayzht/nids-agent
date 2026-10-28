@@ -72,3 +72,26 @@ def test_metrics_work_on_any_format(tmp_path):
     _, flows = load_flows(z)
     m = flow_metrics(flows, {("192.168.100.103", 43478, "85.93.226.122", 6667)})
     assert (m["tp"], m["fn"], m["fp"], m["tn"]) == (1, 1, 0, 1)
+
+
+def test_zeek_conn_handles_space_joined_label_columns(tmp_path):
+    """IoT-23 的标注脚本把最后三列用三个空格追加，而不是 TAB（实测撞到过）。
+
+    不处理的话 label 会被解析成 `(empty)   Malicious   C&C`，恶意/正常全判错。
+    """
+    header = (
+        "#separator \\x09\n"
+        "#fields\tts\tid.orig_h\tid.orig_p\tid.resp_h\tid.resp_p\ttunnel_parents   label   detailed-label\n"
+        "#types\ttime\taddr\tport\taddr\tport\tstring   string   string\n"
+    )
+    rows = [
+        "1526756261.86\t192.168.2.5\t38792\t200.168.87.203\t59353\t(empty)   Malicious   PartOfAHorizontalPortScan",
+        "1526756268.87\t192.168.2.5\t38792\t8.8.8.8\t53\t(empty)   Benign   -",
+    ]
+    z = tmp_path / "conn.labeled"
+    z.write_text(header + "\n".join(rows) + "\n")
+    _, flows = load_flows(z)
+    got = list(flows)
+    assert [f.label for f in got] == ["Malicious", "Benign"]
+    assert [f.malicious for f in got] == [True, False]
+    assert got[0].dport == 59353

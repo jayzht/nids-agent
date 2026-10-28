@@ -143,6 +143,13 @@ def main() -> None:
         kept_flows.append(f)
         kept += 1
     print(f"标注裁剪：{total} → {kept} 条流（两端 IP 都在 pcap 中出现）")
+    # 标注歧义诊断：同一 (src, dport) 既有恶意流又有正常流，通常是标注噪声
+    bad_pairs = {(f.src, f.dport) for f in kept_flows if f.malicious}
+    ambiguous = sum(1 for f in kept_flows if not f.malicious and (f.src, f.dport) in bad_pairs)
+    if ambiguous:
+        benign = sum(1 for f in kept_flows if not f.malicious)
+        print(f"⚠️ 标注歧义：{ambiguous}/{benign} 条正常流与恶意流同源同端口"
+              f"（{ambiguous / max(benign, 1):.1%}），FPR 会被这批抬高")
     if total:
         dist = " · ".join(f"{k} {v}（{v / total:.1%}）" for k, v in sorted(labels.items()))
         print(f"标签分布：{dist}")
@@ -191,7 +198,12 @@ def main() -> None:
             "| 3 | Rbot（SSH 传播 + IRC C2）| 72,115 | **1.000** | 0.0617 | 0.906 |",
             "| 12 | Sogou | 6,449 | 0.005 | 0.0000 | 1.000 |",
             "| **IoT-23 1-1** | Hide-and-Seek（IoT，Telnet 扇出）| 1,008,748 | **1.000** | 0.0002 | 1.000 |",
+            "| IoT-23 / 3-1 | IoT 恶意软件（SSH 扇出）| 156,103 | **1.000** | 0.5692* | 0.983 |",
+            "| IoT-23 / 20-1 | Torii（IoT，TLS C2）| 3,209 | **1.000** | 0.0000 | 1.000 |",
             "| CTU-Malware 409-2 | Hancitor（加密代理 C2）| 313 | 0.035 | 0.0000 | 1.000 |",
+            "",
+            "\\* 3-1 的 FPR 看着高，但脚本同时会打印「与恶意流同源同端口的正常流」占比"
+            "（2591/4536 = 57.1%）——同一波 SSH 扫描里被标成 Benign 的流，属于标注噪声。",
             "",
             "场景 12 几乎无召回，是**数据问题**而非检测问题：它的 pcap 只覆盖 2 分钟"
             "（08:41–08:43），而 binetflow 覆盖 10:32–11:31，两者不是同一时间窗，"

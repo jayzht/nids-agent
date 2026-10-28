@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
@@ -127,6 +128,23 @@ _ZEEK_DEFAULTS = {
 }
 
 
+def _split_tail(parts: list[str], want: int) -> list[str]:
+    """补齐「表头声明了 N 列、数据行却把最后几列用空格粘在一起」的情况。
+
+    IoT-23 的标注脚本就是这么干的：前 21 列是 TAB 分隔的 Zeek conn 字段，
+    末尾 `tunnel_parents / label / detailed-label` 三列用**三个空格**追加，
+    于是整行按 TAB 只切出 21 段，最后一段是 `(empty)   Malicious   C&C`。
+    不处理的话标签会被解析成一整串，恶意/正常全判错（实测撞到过）。
+    """
+    if len(parts) >= want:
+        return parts
+    tail = parts[-1]
+    pieces = re.split(r" {2,}", tail.strip())
+    if len(pieces) <= 1:
+        return parts
+    return parts[:-1] + pieces
+
+
 def from_zeek_conn(lines) -> Iterator[LabeledFlow]:
     """Zeek conn.log（IoT-23 的 `*-zeek-conn-log.labeled` 就是这种）。
 
@@ -141,20 +159,21 @@ def from_zeek_conn(lines) -> Iterator[LabeledFlow]:
             sep = {"\\x09": "\t", "\\x20": " "}.get(raw, "\t")
             continue
         if line.startswith("#fields"):
-            fields = line.split(sep)[1:] if sep in line else line.split("\t")[1:]
-            fields = [f.strip() for f in fields]
+            raw = line.split(sep)[1:] if sep in line else line.split("\t")[1:]
+            fields = [f.strip() for f in raw]
+            # 表头最后一个字段可能把多列用空格粘在一起（见 _split_tail）
+            fields = _split_tail(fields, len(fields) + 2)
             continue
         if line.startswith("#") or not line.strip():
             continue
         if fields is None:
             fields = list(_ZEEK_DEFAULTS.values())
-        parts = line.rstrip("\n").split(sep)
+        parts = _split_tail(line.rstrip("\n").split(sep), len(fields))
         if len(parts) < len(fields):
             continue
         row = dict(zip(fields, parts))
-        label = _pick(row, fields, "label") or _pick(row, fields, "detailed-label") or ""
-        label = label.strip().strip('"')
-        if not label or label == "-":
+        label = _label_of(row, fields)
+        if not label:
             continue
         try:
             src = row[_ZEEK_DEFAULTS["orig_h"]]
@@ -167,6 +186,19 @@ def from_zeek_conn(lines) -> Iterator[LabeledFlow]:
             src=src, sport=sport, dst=dst, dport=dport, label=label,
             start_ts=_to_float(row.get(_ZEEK_DEFAULTS["ts"], "")),
         )
+
+
+PLACEHOLDERS = {"", "-", "(empty)", "null", "none"}
+
+
+def _label_of(row: dict, fields: list[str]) -> str:
+    """标签优先取 `label`，缺失时退回 `detailed-label`；占位符不算标签。"""
+    for name in ("label", "detailed-label"):
+        value = _pick(row, fields, name)
+        value = (value or "").strip().strip('"')
+        if value and value.lower() not in PLACEHOLDERS:
+            return value
+    return ""
 
 
 def _pick(row: dict, fields: list[str], name: str) -> str | None:
