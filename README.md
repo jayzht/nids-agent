@@ -270,15 +270,17 @@ python scripts/benchmark_real.py --with-signature --write-doc   # 结果写入 d
 | 指标 | 数值 |
 |---|---|
 | 恶意样本 | 30 份（APT41、Mirai、Emotet、Locky、Petya、PrintNightmare、Heartbleed…） |
-| **合计检出** | **25/30（83%）** |
+| **合计检出** | **29/30（97%）** |
 | 行为引擎单独 | 9/30 |
-| 签名引擎补足 | +16 |
+| 签名引擎补足 | +20 |
 | 误报对照 | 0/1 触发 |
 
-这个数字是这套多 Agent 架构最直接的证据：**单靠行为规则只能抓 30%，加上 Suricata 签名后到 83%**。
+这个数字是这套多 Agent 架构最直接的证据：**单靠行为规则只能抓 30%，加上 Suricata 签名后到 97%**。
 
-漏掉的 5 份是单包漏洞利用（BlueKeep、PrintNightmare 扫描/SMBv1、WebLogic 反序列化、Drupalgeddon2）——
-只有几个包、没有可统计的行为模式，ET Open 也没有覆盖，属于签名与行为共同的能力边界。
+漏掉的 1 份是 WebLogic CVE-2017-10271：12 个包，没有可统计的行为模式，ET Open 也没有该利用的规则。
+它同时也说明另一件事——**上一版这里写的是 25/30，原因是 Suricata 默认校验 checksum，
+而回放样本普遍带无效校验和**（见「踩过的坑」）。修正一个开关就多救回 4 份，
+这类「引擎安静地不工作」的问题，只能靠比对原始告警发现。
 
 完整明细与归因：`docs/REAL_TRAFFIC_BENCHMARK.md`。
 
