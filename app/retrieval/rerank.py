@@ -158,10 +158,11 @@ async def llm_rerank(query: str, hits: list[Hit], top_n: int, model: str | None 
 async def http_rerank(
     query: str, hits: list[Hit], top_n: int, url: str = "", timeout: float = 30.0
 ) -> list[Hit]:
-    """调用 cross-encoder rerank 服务（TEI 兼容接口）。
+    """调用 rerank 服务，兼容两种协议：
 
-    TEI 的 /rerank 接收 {query, texts}，返回 [{index, score}]；
-    分数是 query-doc 的相关性 logits，比双塔余弦更能分辨「看起来像 vs 真的答得上」。
+    - tei：自建 TEI / scripts/rerank_server.py，`{query, texts}` -> `[{index, score}]`
+    - siliconflow：Jina 风格（硅基流动等），
+      `{model, query, documents, top_n}` -> `{results: [{index, relevance_score}]}`
     """
     import httpx
 
@@ -173,14 +174,30 @@ async def http_rerank(
         f"{h.chunk.heading_path}\n{h.chunk.text}" if h.chunk.heading_path else h.chunk.text
         for h in hits
     ]
+    headers: dict[str, str] = {}
+    if s.rerank_api == "siliconflow":
+        payload = {
+            "model": s.rerank_model,
+            "query": query,
+            "documents": texts,
+            "top_n": top_n,
+            "return_documents": False,
+        }
+        if s.rerank_api_key:
+            headers["Authorization"] = f"Bearer {s.rerank_api_key}"
+    else:
+        payload = {"query": query, "texts": texts, "truncate": True, "raw_scores": False}
+
     async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(
-            target, json={"query": query, "texts": texts, "truncate": True, "raw_scores": False}
-        )
+        resp = await client.post(target, json=payload, headers=headers)
         resp.raise_for_status()
         data = resp.json()
-    ranked = data if isinstance(data, list) else data.get("results", [])
-    order = {int(item["index"]): float(item["score"]) for item in ranked}
+
+    items = data if isinstance(data, list) else data.get("results", [])
+    order: dict[int, float] = {}
+    for item in items:
+        score = item.get("score", item.get("relevance_score", 0.0))
+        order[int(item["index"])] = float(score)
     if not order:
         raise RuntimeError("rerank 服务返回空结果")
 

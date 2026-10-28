@@ -46,7 +46,7 @@ async def main() -> None:
     if args.candidate_k:
         s.candidate_k = args.candidate_k
     modes = [m.strip() for m in args.modes.split(",") if m.strip()]
-    if "http" in modes and not service_alive(s.rerank_url):
+    if "http" in modes and s.rerank_api == "tei" and not service_alive(s.rerank_url):
         print(f"[skip] rerank 服务不可用：{s.rerank_url}")
         modes = [m for m in modes if m != "http"]
 

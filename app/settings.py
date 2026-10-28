@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     rerank_mode: str = "none"      # none | lexical | llm | http
     # TEI / 任意兼容 rerank 服务：POST {query, texts} -> [{index, score}]
     rerank_url: str = "http://127.0.0.1:8080/rerank"
+    # tei（自建，texts/score）| siliconflow（Jina 风格，documents/relevance_score）
+    rerank_api: str = "tei"
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_api_key: str = ""
     # 本地 cross-encoder（sentence-transformers）
     rerank_model_path: str = str(BASE_DIR / "data" / "models" / "bge-reranker-v2-m3")
     rerank_max_length: int = 512

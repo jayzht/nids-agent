@@ -500,6 +500,35 @@ RETRIEVAL_MODE=hybrid
 RETRIEVAL_MODE=sparse
 ```
 
+#### 全 API 又不牺牲检索质量：硅基流动
+
+DeepSeek 没有 embeddings，但硅基流动的 `BAAI/bge-m3` **就是建索引时用的同一个模型**
+（1024 维、多语言、8K 上下文），所以换过去**不需要重建索引**，向量空间是同一套：
+
+```bash
+# .env —— 生成走 DeepSeek，向量和重排走硅基流动
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_MODEL=deepseek-chat
+
+EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
+EMBEDDING_API_KEY=sk-xxxx
+EMBEDDING_MODEL=BAAI/bge-m3
+RETRIEVAL_MODE=hybrid
+
+RERANK_MODE=http
+RERANK_API=siliconflow
+RERANK_URL=https://api.siliconflow.cn/v1/rerank
+RERANK_MODEL=BAAI/bge-reranker-v2-m3
+RERANK_API_KEY=sk-xxxx
+```
+
+选型只看一条：**embedding 必须和建索引时的模型一致**。`bge-large-zh/en-v1.5` 虽然也是
+1024 维，但模型不同、向量空间不同，换它要全量重建索引（4 万片段），而且只有 512 上下文、
+单语言；`Pro/bge-m3` 同理需要先确认维度与模型指纹再决定。
+
+rerank 有两种协议，`RERANK_API` 切换：`tei`（自建，`texts` → `score`）和
+`siliconflow`（Jina 风格，`documents` → `relevance_score`）。
+
 50 题 golden set 实测：
 
 | 检索模式 | recall@6 | MRR | nDCG@6 | 依赖 |
@@ -724,6 +753,10 @@ CPU 推理约 4~5s/次；多查询场景已改成「先合并候选、只重排�
 
 全 API 形态零本地模型、零显存，代价是 MRR 低 0.12——因为 DeepSeek 不提供 embeddings，
 只能用 BM25（纯词面匹配）。想要质量就换回 bge-m3；想要省事就全 API。
+
+注意「全 API」不等于「只能用 BM25」：把 embedding 换成硅基流动的 `BAAI/bge-m3`
+（同模型同维度，索引不用重建），就能在零本地进程的前提下拿到 hybrid 的召回，
+详见 [4. 云后端](#4-云后端deepseek本地只留-embedding)。
 
 ## 十、这个项目覆盖的岗位知识点
 
