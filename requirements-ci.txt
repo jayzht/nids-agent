@@ -1,0 +1,10 @@
+# ===== CI 专用：不装 sentence-transformers（它会拉 torch，CI 上白等 5 分钟）=====
+# 本地重排（RERANK_MODE=local）才需要它，测试不依赖。
+-r requirements.txt
+
+beautifulsoup4>=4.12
+html2text>=2024.2
+pypdf>=4.0
+pytest>=8.0
+pytest-asyncio>=0.23
+ruff>=0.5
